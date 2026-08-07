@@ -1,9 +1,9 @@
 import React from "react";
 
 export default function MetricsPanel() {
-    return ( <
-        div style = {
-            {
+    return (
+        <div
+            style={{
                 position: "fixed",
                 right: "20px",
                 top: "50%",
@@ -14,20 +14,22 @@ export default function MetricsPanel() {
                 borderRadius: "12px",
                 padding: "15px",
                 color: "white",
-                width: "180px"
-            }
-        } >
-        <
-        h4 style = {
-            { marginBottom: "10px", color: "#00ffff" } } >
-        Metrics <
-        /h4>
+                width: "180px",
+            }}
+        >
+            <h4
+                style={{
+                    marginBottom: "10px",
+                    color: "#00ffff",
+                }}
+            >
+                Metrics
+            </h4>
 
-        <
-        div > Accuracy: -- % < /div> <
-        div > Loss: -- < /div> <
-        div > Model: -- < /div> <
-        div > Status: Idle < /div> <
-        /div>
+            <div>Accuracy: -- %</div>
+            <div>Loss: --</div>
+            <div>Model: --</div>
+            <div>Status: Idle</div>
+        </div>
     );
 }

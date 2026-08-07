@@ -19,17 +19,14 @@ export default function FlowParticle({ start, end }) {
         }
     });
 
-    return ( <
-        mesh ref = { mesh } >
-        <
-        sphereGeometry args = {
-            [0.12, 16, 16]
-        }
-        /> <
-        meshStandardMaterial color = "#00ffff"
-        emissive = "#00ffff"
-        emissiveIntensity = { 2 }
-        /> < /
-        mesh >
+    return (
+        <mesh ref={mesh}>
+            <sphereGeometry args={[0.12, 16, 16]} />
+            <meshStandardMaterial
+                color="#00ffff"
+                emissive="#00ffff"
+                emissiveIntensity={2}
+            />
+        </mesh>
     );
 }
