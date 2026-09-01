@@ -49,6 +49,8 @@ from google.genai import types
 from pydantic import BaseModel
 
 import agents
+import feature_engineering
+from agent_schema import Timer, build_agent_record, new_workflow_id
 
 load_dotenv()
 
@@ -291,6 +293,80 @@ EDA REPORT:
     eda_report["summary"] = summary
 
     return eda_report
+
+
+class FeatureEngineeringRequest(BaseModel):
+    dataset_id: str
+    workflow_id: str | None = None  # pass the same id across pipeline stages to link them later
+
+
+@app.post("/agents/feature-engineering")
+def run_feature_engineering_agent(req: FeatureEngineeringRequest):
+    """First agent to use the standardized output envelope (agent_schema.py,
+    resolves Decisions.md OD-4). Same Sense -> Reason -> Act discipline as
+    the Data Cleaning Agent — Gemini only ever picks from a fixed action
+    menu; pandas/scikit-learn does the actual work."""
+    if req.dataset_id not in DATASETS:
+        raise HTTPException(status_code=404, detail="Dataset not found. Upload it again.")
+    if gemini_client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Feature Engineering Agent needs GEMINI_API_KEY to be set on the server.",
+        )
+
+    workflow_id = req.workflow_id or new_workflow_id()
+    df = DATASETS[req.dataset_id]
+
+    with Timer() as timer:
+        # 1. SENSE
+        profile = feature_engineering.profile_for_feature_engineering(df)
+
+        # 2. REASON
+        prompt = feature_engineering.build_feature_engineering_prompt(profile)
+        try:
+            result = gemini_client.models.generate_content(
+                model="gemini-3-flash-preview",
+                contents=[{"role": "user", "parts": [{"text": prompt}]}],
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
+            )
+            plan = feature_engineering.parse_plan(result.text)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Agent reasoning step failed: {e}")
+
+        # 3. ACT
+        engineered_df, steps = feature_engineering.apply_feature_engineering_plan(df, plan["actions"])
+
+    engineered_id = f"{req.dataset_id}-engineered"
+    DATASETS[engineered_id] = engineered_df
+
+    any_failed = any(s["status"] == "failed" for s in steps)
+    status = "partial" if any_failed else "success"
+
+    record = build_agent_record(
+        workflow_id=workflow_id,
+        dataset_id=req.dataset_id,
+        agent="feature_engineering",
+        status=status,
+        input_summary={"n_rows": profile["n_rows"], "n_columns": profile["n_columns"]},
+        reasoning=plan.get("summary", ""),
+        actions=steps,
+        output_summary={
+            "columns_before": df.columns.tolist(),
+            "columns_after": engineered_df.columns.tolist(),
+            "preview": engineered_df.head(5)
+            .astype(object)
+            .where(pd.notnull(engineered_df.head(5)), None)
+            .to_dict(orient="records"),
+        },
+        metrics={
+            "actions_attempted": len(steps),
+            "actions_succeeded": sum(1 for s in steps if s["status"] == "success"),
+            "actions_failed": sum(1 for s in steps if s["status"] == "failed"),
+        },
+        execution_time_seconds=timer.elapsed,
+    )
+    record["engineered_dataset_id"] = engineered_id
+    return record
 
 
 @app.get("/dataset/{dataset_id}/download")
