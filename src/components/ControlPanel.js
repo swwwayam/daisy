@@ -7,6 +7,8 @@ export default function ControlPanel({
     onRun,
     onRunEDA,
     canRunEDA,
+    onRunFeatureEngineering,
+    canRunFeatureEngineering,
     isRunning,
     pipelineDone,
     })
@@ -213,6 +215,24 @@ export default function ControlPanel({
                         }}
                     >
                         📊 RUN EDA AGENT
+                    </button>
+
+                    <button
+                        onClick={onRunFeatureEngineering}
+                        disabled={!canRunFeatureEngineering}
+                        style={{
+                            marginTop: "10px",
+                            padding: "10px 20px",
+                            background: "#203040",
+                            color: "white",
+                            border: "1px solid cyan",
+                            borderRadius: "10px",
+                            cursor: canRunFeatureEngineering ? "pointer" : "not-allowed",
+                            opacity: canRunFeatureEngineering ? 1 : 0.4,
+                            fontFamily: "'Orbitron', monospace"
+                        }}
+                    >
+                        🧪 RUN FEATURE ENGINEERING AGENT
                     </button>
                 </div>
             </div>

@@ -10,6 +10,7 @@ import ChatPanel from "./ChatPanel";
 import ControlPanel from "./ControlPanel";
 import AgentLogPanel from "./AgentLogPanel";
 import PipelineTracker from "./PipelineTracker";
+import TargetColumnSelector from "./TargetColumnSelector";
 
 const API_BASE = "http://localhost:8000";
 
@@ -37,6 +38,9 @@ export default function Scene() {
     const [isRunning, setIsRunning] = useState(false);
     const [agentResult, setAgentResult] = useState(null);
     const [edaResult, setEdaResult] = useState(null);
+    const [featureResult, setFeatureResult] = useState(null);
+    const [modelSelectionResult, setModelSelectionResult] = useState(null);
+    const [modelTrainingResult, setModelTrainingResult] = useState(null);
     const [agentError, setAgentError] = useState(null);
     const [pipelineStage, setPipelineStage] = useState("upload");
 
@@ -64,6 +68,9 @@ export default function Scene() {
         setIsRunning(true);
         setAgentResult(null);
         setEdaResult(null);
+        setFeatureResult(null);
+        setModelSelectionResult(null);
+        setModelTrainingResult(null);
         setAgentError(null);
         setActiveNode("Data");
 
@@ -75,8 +82,11 @@ export default function Scene() {
             );
 
             setAgentResult(cleaning);
-
-            setActiveNode("Evaluation");
+            setPipelineStage("cleaning");
+            // Was setActiveNode("Evaluation") here — lit a node for a
+            // stage that doesn't exist yet in this pipeline. Now that
+            // Feature/Model/Training are real nodes, this stays on
+            // "Data" (the stage that actually just ran) instead.
 
         }
         catch (err) {
@@ -96,6 +106,7 @@ export default function Scene() {
         if (!agentResult?.cleaned_dataset_id) return;
 
         setIsRunning(true);
+        setActiveNode("Data"); // EDA also operates on the data domain — no separate node yet
 
         try {
 
@@ -107,6 +118,7 @@ export default function Scene() {
             );
 
             setEdaResult(eda);
+            setPipelineStage("eda");
 
         }
         catch (err) {
@@ -120,6 +132,82 @@ export default function Scene() {
 
         }
 
+    };
+
+    const handleRunFeatureEngineering = async () => {
+        if (!agentResult?.cleaned_dataset_id) return;
+
+        setIsRunning(true);
+        setAgentError(null);
+        setActiveNode("Feature");
+
+        try {
+            const feature = await runAgent(
+                "/agents/feature-engineering",
+                { dataset_id: agentResult.cleaned_dataset_id }
+            );
+            setFeatureResult(feature);
+            setPipelineStage("feature");
+        }
+        catch (err) {
+            setAgentError(err.message || "Feature engineering failed.");
+        }
+        finally {
+            setIsRunning(false);
+        }
+    };
+
+    const handleRunModelSelection = async (targetColumn) => {
+        if (!featureResult?.engineered_dataset_id) return;
+
+        setIsRunning(true);
+        setAgentError(null);
+        setActiveNode("Model");
+
+        try {
+            const selection = await runAgent(
+                "/agents/model-selection",
+                {
+                    dataset_id: featureResult.engineered_dataset_id,
+                    target_column: targetColumn,
+                }
+            );
+            setModelSelectionResult(selection);
+            setPipelineStage("model-selection");
+        }
+        catch (err) {
+            setAgentError(err.message || "Model selection failed.");
+        }
+        finally {
+            setIsRunning(false);
+        }
+    };
+
+    const handleRunModelTraining = async (candidateModels) => {
+        if (!featureResult?.engineered_dataset_id || !modelSelectionResult) return;
+
+        setIsRunning(true);
+        setAgentError(null);
+        setActiveNode("Training");
+
+        try {
+            const training = await runAgent(
+                "/agents/model-training",
+                {
+                    dataset_id: featureResult.engineered_dataset_id,
+                    target_column: modelSelectionResult.input_summary.target_column,
+                    candidate_models: candidateModels,
+                }
+            );
+            setModelTrainingResult(training);
+            setPipelineStage("model-training");
+        }
+        catch (err) {
+            setAgentError(err.message || "Model training failed.");
+        }
+        finally {
+            setIsRunning(false);
+        }
     };
 
     return (
@@ -145,12 +233,14 @@ export default function Scene() {
                     <AgentNode position={[-3, 0, 0]} label="Model" active={activeNode === "Model"} />
                     <AgentNode position={[0, 3, 0]} label="Training" active={activeNode === "Training"} />
                     <AgentNode position={[0, -3, 0]} label="Evaluation" active={activeNode === "Evaluation"} />
+                    <AgentNode position={[2.1, -2.1, 0]} label="Feature" active={activeNode === "Feature"} />
 
                     {/* CONNECTION LINES */}
                     <Line points={[[0, 0, 0], [3, 0, 0]]} color="white" />
                     <Line points={[[0, 0, 0], [-3, 0, 0]]} color="white" />
                     <Line points={[[0, 0, 0], [0, 3, 0]]} color="white" />
                     <Line points={[[0, 0, 0], [0, -3, 0]]} color="white" />
+                    <Line points={[[0, 0, 0], [2.1, -2.1, 0]]} color="white" />
 
                     {/* FLOW PARTICLES */}
                     {activeNode === "Data" && (
@@ -175,6 +265,12 @@ export default function Scene() {
                         <>
                             <FlowParticle start={[0, 0, 0]} end={[0, -3, 0]} />
                             <FlowParticle start={[0, 0, 0]} end={[0, -3, 0]} />
+                        </>
+                    )}
+                    {activeNode === "Feature" && (
+                        <>
+                            <FlowParticle start={[0, 0, 0]} end={[2.1, -2.1, 0]} />
+                            <FlowParticle start={[0, 0, 0]} end={[2.1, -2.1, 0]} />
                         </>
                     )}
 
@@ -214,7 +310,9 @@ export default function Scene() {
                 }}
                 onRun={handleRunCleaningAgent}
                 onRunEDA={handleRunEDAAgent}
+                onRunFeatureEngineering={handleRunFeatureEngineering}
                 canRunEDA={!!agentResult}
+                canRunFeatureEngineering={!!agentResult}
                 isRunning={isRunning}
                 pipelineDone={!!agentResult}
             />
@@ -222,8 +320,27 @@ export default function Scene() {
              {/* PIPELINE TRACKER */}
             {/* <PipelineTracker currentStage={pipelineStage} /> */}
 
+            {/* TARGET COLUMN SELECTOR — appears once Feature Engineering
+                has produced an engineered dataset to pick a target from */}
+            {featureResult && !modelSelectionResult && (
+                <TargetColumnSelector
+                    columns={featureResult.output_summary?.columns_after || []}
+                    onConfirm={handleRunModelSelection}
+                    isRunning={isRunning}
+                />
+            )}
+
             {/* AGENT LOG */}
-            <AgentLogPanel isRunning={isRunning} error={agentError} agentResult={agentResult} edaResult={edaResult} />
+            <AgentLogPanel
+                isRunning={isRunning}
+                error={agentError}
+                agentResult={agentResult}
+                edaResult={edaResult}
+                featureResult={featureResult}
+                modelSelectionResult={modelSelectionResult}
+                modelTrainingResult={modelTrainingResult}
+                onTrainModels={handleRunModelTraining}
+            />
 
         
 

@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from feature_engineering import (
+    apply_fallback_encoding,
     apply_feature_engineering_plan,
     parse_plan,
     profile_for_feature_engineering,
@@ -148,3 +149,62 @@ class TestApplyFeatureEngineeringPlan:
         assert "constant_col" not in result_df.columns
         assert "signup_date" not in result_df.columns
         assert "signup_date_year" in result_df.columns
+
+
+class TestApplyFallbackEncoding:
+    """Real scenario this addresses: Gemini's Feature Engineering plan
+    doesn't encode every non-numeric column, and Model Training's own
+    guardrail then correctly refuses to proceed. This fallback closes
+    that gap deterministically and visibly, without loosening Model
+    Training's intentional strictness."""
+
+    def test_encodes_leftover_categorical_column(self, sample_df):
+        # sample_df's 'category' column was never touched by any Gemini
+        # plan here — simulating exactly what was observed live: a column
+        # Gemini's plan simply didn't address.
+        result_df, steps = apply_fallback_encoding(sample_df)
+        assert "category" not in result_df.columns  # onehot-encoded away
+        assert any(c.startswith("category_") for c in result_df.columns)
+        assert len(steps) >= 1
+        assert all(s["type"] == "auto_encode_remaining" for s in steps)
+
+    def test_does_not_touch_already_numeric_columns(self, sample_df):
+        already_numeric_df = sample_df.drop(columns=["category", "signup_date"])
+        result_df, steps = apply_fallback_encoding(already_numeric_df)
+        assert steps == []  # nothing needed fixing
+        assert list(result_df.columns) == list(already_numeric_df.columns)
+
+    def test_low_cardinality_uses_onehot(self):
+        df = pd.DataFrame({"color": ["red", "blue", "red", "green"] * 5})
+        result_df, steps = apply_fallback_encoding(df)
+        assert "onehot" in steps[0]["reasoning"]
+        assert "color_red" in result_df.columns
+
+    def test_high_cardinality_uses_frequency(self):
+        # 15 unique values > the 10-value onehot threshold
+        df = pd.DataFrame({"city": [f"city_{i}" for i in range(15)] * 3})
+        result_df, steps = apply_fallback_encoding(df)
+        assert "frequency" in steps[0]["reasoning"]
+        assert pd.api.types.is_numeric_dtype(result_df["city"])
+
+    def test_original_dataframe_not_mutated(self, sample_df):
+        original_columns = list(sample_df.columns)
+        apply_fallback_encoding(sample_df)
+        assert list(sample_df.columns) == original_columns
+
+    def test_action_type_is_distinct_from_gemini_actions(self, sample_df):
+        # This is the audit-trail guarantee: fallback actions must never
+        # be indistinguishable from actions Gemini itself proposed.
+        _, plan_steps = apply_feature_engineering_plan(sample_df, [])
+        _, fallback_steps = apply_fallback_encoding(sample_df)
+        gemini_action_types = {"encode_categorical", "scale_numeric", "extract_datetime_features",
+                                "drop_low_variance_column", "drop_high_correlation_column"}
+        for step in fallback_steps:
+            assert step["type"] == "auto_encode_remaining"
+            assert step["type"] not in gemini_action_types
+
+    def test_fully_numeric_input_produces_no_steps(self):
+        df = pd.DataFrame({"a": [1, 2, 3], "b": [4.0, 5.0, 6.0]})
+        result_df, steps = apply_fallback_encoding(df)
+        assert steps == []
+        assert result_df.equals(df)

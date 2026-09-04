@@ -277,3 +277,55 @@ def apply_feature_engineering_plan(df: pd.DataFrame, actions: list[dict]) -> tup
                 step["message"] = str(e)
         steps.append(step)
     return df, steps
+
+
+def apply_fallback_encoding(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
+    """Deterministic safety net, run AFTER Gemini's plan executes.
+
+    Gemini's plan is not guaranteed to address every non-numeric column —
+    it might judge some as not worth encoding, or simply omit them. If
+    that happens, Model Training's own guardrail correctly refuses to
+    proceed rather than guessing (see model_training.py's module
+    docstring) — which is the right behavior for THAT agent, but it means
+    the pipeline can dead-end on a column Gemini's reasoning simply didn't
+    cover.
+
+    This closes that gap HERE, upstream, rather than loosening Model
+    Training's intentional strictness: any column still non-numeric after
+    Gemini's plan gets a sensible default encoding, applied deterministically
+    and logged as its own distinct, visible action — never silently folded
+    into Gemini's own action list, so the audit trail stays honest about
+    what the AI actually decided versus what this fallback caught.
+
+    Strategy choice: one-hot for low-cardinality columns (<=10 unique
+    values, keeps the new column count bounded), frequency encoding for
+    higher-cardinality ones (avoids exploding into dozens of new columns
+    for something like a free-text or high-cardinality categorical field).
+    """
+    df = df.copy()
+    steps = []
+    remaining = [c for c in df.columns if not pd.api.types.is_numeric_dtype(df[c])]
+
+    for column in remaining:
+        cardinality = int(df[column].nunique(dropna=True))
+        strategy = "onehot" if cardinality <= 10 else "frequency"
+        step = {
+            "type": "auto_encode_remaining",
+            "column": column,
+            "reasoning": (
+                f"This column was not addressed by the AI's feature engineering plan. "
+                f"Automatically applying {strategy} encoding so the dataset is fully "
+                f"numeric and ready for model training."
+            ),
+        }
+        try:
+            step["message"] = _apply_encode_categorical(df, column, strategy)
+            step["status"] = "success"
+        except Exception as e:  # noqa: BLE001 — surfaced, not swallowed
+            step["status"] = "failed"
+            step["message"] = str(e)
+        steps.append(step)
+
+    return df, steps
+
+

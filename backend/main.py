@@ -50,6 +50,8 @@ from pydantic import BaseModel
 
 import agents
 import feature_engineering
+import model_selection
+import model_training
 from agent_schema import Timer, build_agent_record, new_workflow_id
 
 load_dotenv()
@@ -336,6 +338,19 @@ def run_feature_engineering_agent(req: FeatureEngineeringRequest):
         # 3. ACT
         engineered_df, steps = feature_engineering.apply_feature_engineering_plan(df, plan["actions"])
 
+        # 4. FALLBACK — deterministic safety net for anything Gemini's plan
+        # didn't address. Logged as its own distinct action type
+        # ("auto_encode_remaining"), never merged into Gemini's own steps,
+        # so the audit trail stays honest about what the AI actually
+        # decided vs. what this fallback caught. See
+        # feature_engineering.py's apply_fallback_encoding() docstring for
+        # the full reasoning — this exists because Model Training's own
+        # guardrail correctly (and intentionally) refuses non-numeric
+        # data rather than guessing, which means the pipeline needs a
+        # guarantee upstream that it never gets there in the first place.
+        engineered_df, fallback_steps = feature_engineering.apply_fallback_encoding(engineered_df)
+        steps = steps + fallback_steps
+
     engineered_id = f"{req.dataset_id}-engineered"
     DATASETS[engineered_id] = engineered_df
 
@@ -366,6 +381,152 @@ def run_feature_engineering_agent(req: FeatureEngineeringRequest):
         execution_time_seconds=timer.elapsed,
     )
     record["engineered_dataset_id"] = engineered_id
+    return record
+
+
+class ModelSelectionRequest(BaseModel):
+    dataset_id: str
+    target_column: str
+    workflow_id: str | None = None
+
+
+@app.post("/agents/model-selection")
+def run_model_selection_agent(req: ModelSelectionRequest):
+    """This agent does not transform the dataset — it recommends which ML
+    algorithms to try next. Problem type (classification vs. regression)
+    is decided DETERMINISTICALLY by looking at the target column, never
+    left to Gemini. Gemini only ranks candidates from a fixed vocabulary;
+    a validation guardrail strips out anything it invents that isn't in
+    that vocabulary — this plays the same safety-net role the 'Act' step
+    plays in the data-transforming agents."""
+    if req.dataset_id not in DATASETS:
+        raise HTTPException(status_code=404, detail="Dataset not found. Upload it again.")
+    if gemini_client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Model Selection Agent needs GEMINI_API_KEY to be set on the server.",
+        )
+
+    workflow_id = req.workflow_id or new_workflow_id()
+    df = DATASETS[req.dataset_id]
+
+    with Timer() as timer:
+        # 1. SENSE (deterministic)
+        try:
+            profile = model_selection.profile_for_model_selection(df, req.target_column)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        # 2. REASON
+        prompt = model_selection.build_model_selection_prompt(profile)
+        try:
+            result = gemini_client.models.generate_content(
+                model="gemini-3-flash-preview",
+                contents=[{"role": "user", "parts": [{"text": prompt}]}],
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
+            )
+            plan = model_selection.parse_plan(result.text)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Agent reasoning step failed: {e}")
+
+        # 3. GUARDRAIL (validate against fixed vocabulary)
+        valid, rejected = model_selection.validate_recommendations(
+            plan["recommendations"], profile["problem_type"]
+        )
+
+    status = "success" if valid and not rejected else ("partial" if valid else "failed")
+
+    record = build_agent_record(
+        workflow_id=workflow_id,
+        dataset_id=req.dataset_id,
+        agent="model_selection",
+        status=status,
+        input_summary={
+            "target_column": profile["target_column"],
+            "problem_type": profile["problem_type"],
+            "n_rows": profile["n_rows"],
+            "n_features": profile["n_features"],
+        },
+        reasoning=plan.get("summary", ""),
+        actions=valid + rejected,
+        output_summary={
+            "problem_type": profile["problem_type"],
+            "top_recommendation": valid[0]["model"] if valid else None,
+            "ranked_candidates": [r["model"] for r in sorted(valid, key=lambda r: r.get("rank") or 99)],
+        },
+        metrics={
+            "candidates_proposed": len(plan["recommendations"]),
+            "candidates_accepted": len(valid),
+            "candidates_rejected": len(rejected),
+        },
+        execution_time_seconds=timer.elapsed,
+    )
+    return record
+
+
+class ModelTrainingRequest(BaseModel):
+    dataset_id: str
+    target_column: str
+    candidate_models: list[str]
+    test_size: float = 0.2
+    workflow_id: str | None = None
+
+
+@app.post("/agents/model-training")
+def run_model_training_agent(req: ModelTrainingRequest):
+    """NO Gemini call in this agent — see model_training.py's module
+    docstring for why. Real sklearn .fit()/.predict() for every requested
+    candidate; the winner is picked by an objective metric comparison,
+    not an LLM judgment call."""
+    if req.dataset_id not in DATASETS:
+        raise HTTPException(status_code=404, detail="Dataset not found. Upload it again.")
+
+    workflow_id = req.workflow_id or new_workflow_id()
+    df = DATASETS[req.dataset_id]
+
+    with Timer() as timer:
+        try:
+            result = model_training.train_and_evaluate(
+                df, req.target_column, req.candidate_models, test_size=req.test_size
+            )
+        except model_training.TrainingDataError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    any_failed = any(r["status"] == "failed" for r in result["results"])
+    status = "partial" if any_failed else ("success" if result["best_model"] else "failed")
+
+    record = build_agent_record(
+        workflow_id=workflow_id,
+        dataset_id=req.dataset_id,
+        agent="model_training",
+        status=status,
+        input_summary={
+            "target_column": req.target_column,
+            "problem_type": result["problem_type"],
+            "n_train": result["n_train"],
+            "n_test": result["n_test"],
+            "rows_dropped_for_missing_values": result["warnings"]["rows_dropped_for_missing_values"],
+        },
+        reasoning=(
+            f"Trained {len(req.candidate_models)} candidate model(s) on an "
+            f"{int((1 - req.test_size) * 100)}/{int(req.test_size * 100)} train/test split. "
+            f"Best model selected by {result['primary_metric']} "
+            f"({'higher' if result['problem_type'] == 'classification' else 'lower'} is better) "
+            "— this is an objective metric comparison, not an AI judgment call."
+        ),
+        actions=result["results"],
+        output_summary={
+            "problem_type": result["problem_type"],
+            "primary_metric": result["primary_metric"],
+            "best_model": result["best_model"],
+        },
+        metrics={
+            "models_attempted": len(req.candidate_models),
+            "models_succeeded": sum(1 for r in result["results"] if r["status"] == "success"),
+            "models_failed": sum(1 for r in result["results"] if r["status"] == "failed"),
+        },
+        execution_time_seconds=timer.elapsed,
+    )
     return record
 
 
