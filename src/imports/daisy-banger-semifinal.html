@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>D.A.I.S.Y — Build models, not pipelines</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0A0908;
+    --ink-2:#121110;
+    --cream:#F5F0E6;
+    --cream-dim:#B8B0A2;
+    --gold:#E8A857;
+    --gold-deep:#8A5A24;
+    --gold-glow:rgba(232,168,87,0.35);
+    --line:rgba(245,240,230,0.10);
+    --glass:rgba(245,240,230,0.05);
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html{scroll-behavior:smooth;}
+  body{
+    background:var(--ink); color:var(--cream);
+    font-family:'Instrument Sans', sans-serif;
+    overflow-x:hidden;
+  }
+  .display{font-family:'Bricolage Grotesque', sans-serif;}
+  .mono{font-family:'IBM Plex Mono', monospace;}
+  a{color:inherit; text-decoration:none;}
+
+  .reveal{opacity:0; transform:translateY(28px); transition:opacity .9s ease, transform .9s ease;}
+  .reveal.in{opacity:1; transform:translateY(0);}
+
+  /* ---------------- NAV ---------------- */
+  nav{
+    position:fixed; top:0; left:0; right:0; z-index:50;
+    display:flex; align-items:center; justify-content:space-between;
+    gap:16px;
+    padding:20px 48px;
+    background:linear-gradient(180deg, rgba(10,9,8,0.75), rgba(10,9,8,0.35));
+    backdrop-filter:blur(16px) saturate(140%);
+    -webkit-backdrop-filter:blur(16px) saturate(140%);
+    border-bottom:1px solid var(--line);
+  }
+  .logo{display:flex; align-items:center; gap:10px; font-weight:600; font-size:15px; letter-spacing:0.01em; flex-shrink:0;}
+  .logo-mark{width:22px; height:22px; border-radius:50%; background:radial-gradient(circle at 35% 30%, var(--gold), var(--gold-deep) 70%); flex-shrink:0;}
+  .nav-links{display:flex; gap:36px; font-size:13px; color:var(--cream-dim); flex-wrap:wrap;}
+  .nav-links a:hover{color:var(--cream);}
+  .nav-cta{
+    background:linear-gradient(155deg, rgba(255,255,255,0.16), rgba(255,255,255,0.03));
+    border:1px solid rgba(255,255,255,0.22); padding:9px 20px; border-radius:100px; font-size:13px;
+    backdrop-filter:blur(12px); box-shadow:inset 0 1px 0 rgba(255,255,255,0.25);
+  }
+  .nav-cta:hover{border-color:var(--gold); color:var(--gold);}
+  .nav-cta{flex-shrink:0; white-space:nowrap;}
+
+  @media (max-width:780px){
+    nav{padding:16px 20px;}
+    .nav-links{display:none;}
+    .logo{font-size:14px;}
+    .nav-cta{padding:8px 16px; font-size:12.5px;}
+  }
+
+  /* ---------------- HERO ---------------- */
+  .hero{
+    position:relative; min-height:100vh; padding:150px 48px 100px;
+    background:
+      radial-gradient(ellipse 1100px 750px at 50% -5%, rgba(232,168,87,0.55), transparent 55%),
+      radial-gradient(ellipse 900px 700px at 50% 10%, rgba(180,120,50,0.35), transparent 60%),
+      linear-gradient(180deg, #171208 0%, var(--ink) 55%);
+    display:flex; flex-direction:column; align-items:center; text-align:center;
+    overflow:hidden;
+  }
+  .hero::before{
+    content:''; position:absolute; inset:0;
+    background:radial-gradient(circle 480px at 50% 28%, rgba(255,200,130,0.25), transparent 70%);
+    pointer-events:none;
+  }
+  .eyebrow{
+    display:inline-flex; align-items:center; gap:8px;
+    border:1px solid var(--line); border-radius:100px; padding:7px 16px;
+    font-size:12px; color:var(--cream-dim); margin-bottom:36px;
+  }
+  .eyebrow .dot{width:5px; height:5px; border-radius:50%; background:var(--gold); box-shadow:0 0 8px var(--gold);}
+
+  h1.hero-title{
+    font-size:clamp(48px, 8vw, 118px);
+    line-height:0.98;
+    font-weight:600;
+    letter-spacing:-0.02em;
+    max-width:1100px;
+  }
+  h1.hero-title .fade{
+    background:linear-gradient(180deg, var(--cream) 0%, rgba(245,240,230,0.35) 100%);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+  h1.hero-title .accent{color:var(--gold);}
+
+  .hero-sub{
+    max-width:520px; margin:28px auto 0; color:var(--cream-dim); font-size:16px; line-height:1.6;
+  }
+
+  .hero-cta-row{
+    display:flex; align-items:center; gap:16px; margin-top:40px;
+  }
+  .btn-primary{
+    background:var(--cream); color:var(--ink); font-weight:600; font-size:14px;
+    padding:14px 26px; border-radius:100px; display:flex; align-items:center; gap:8px;
+    transition:transform .2s ease;
+  }
+  .btn-primary:hover{transform:translateY(-2px);}
+  .btn-ghost{
+    border:1px solid var(--line); font-size:14px; padding:14px 24px; border-radius:100px; color:var(--cream-dim);
+  }
+  .btn-ghost:hover{border-color:var(--gold); color:var(--gold);}
+
+  /* floating glass cards — true glassmorphism: layered highlight, blur, inset light, soft shadow */
+  .float-card{
+    position:absolute;
+    background:linear-gradient(155deg, rgba(255,255,255,0.14), rgba(255,255,255,0.03) 40%, rgba(255,255,255,0.02));
+    border:1px solid rgba(255,255,255,0.18);
+    border-radius:20px;
+    backdrop-filter:blur(22px) saturate(140%);
+    -webkit-backdrop-filter:blur(22px) saturate(140%);
+    padding:18px 20px; text-align:left;
+    box-shadow:
+      0 30px 70px rgba(0,0,0,0.55),
+      inset 0 1px 0 rgba(255,255,255,0.25),
+      inset 0 0 24px rgba(255,255,255,0.03);
+    animation:drift 7s ease-in-out infinite;
+  }
+  .float-card::before{
+    content:''; position:absolute; top:0; left:14px; right:14px; height:1px;
+    background:linear-gradient(90deg, transparent, rgba(255,255,255,0.6), transparent);
+  }
+  @keyframes drift{0%,100%{transform:translateY(0px);} 50%{transform:translateY(-10px);}}
+  .fc-1{top:14%; left:5%; width:206px; animation-delay:0s;}
+  .fc-2{top:32%; right:5%; width:216px; animation-delay:1.2s;}
+  .fc-3{bottom:13%; left:8%; width:196px; animation-delay:2.4s;}
+  .fc-4{bottom:19%; right:7%; width:206px; animation-delay:.6s;}
+  .fc-k{font-size:10.5px; color:var(--cream-dim); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:8px; display:flex; justify-content:space-between;}
+  .fc-v{font-size:23px; font-weight:600; text-shadow:0 1px 12px rgba(0,0,0,0.4);}
+  .fc-v.gold{color:var(--gold); text-shadow:0 0 20px rgba(232,168,87,0.5);}
+  .fc-bar{height:3px; background:rgba(255,255,255,0.12); border-radius:2px; margin-top:10px; overflow:hidden;}
+  .fc-bar-fill{height:100%; background:linear-gradient(90deg, var(--gold-deep), var(--gold)); border-radius:2px; box-shadow:0 0 8px var(--gold);}
+  .fc-note{font-size:11px; color:var(--cream-dim); margin-top:6px;}
+
+  /* donut ring card (Contract Type style) */
+  .fc-donut{display:flex; align-items:center; justify-content:center; margin:6px 0 10px; position:relative;}
+  .fc-donut svg{filter:drop-shadow(0 0 10px rgba(232,168,87,0.35));}
+  .fc-donut .center-label{position:absolute; text-align:center;}
+  .fc-donut .center-label .big{font-size:20px; font-weight:700;}
+  .fc-donut .center-label .small{font-size:9px; color:var(--cream-dim);}
+
+  /* circular badge (69% Automouse style) */
+  .badge-ring{
+    position:absolute; width:118px; height:118px; border-radius:50%;
+    background:radial-gradient(circle at 40% 30%, rgba(255,255,255,0.12), rgba(255,255,255,0.02));
+    border:1px solid rgba(255,255,255,0.22);
+    backdrop-filter:blur(18px);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    box-shadow:0 20px 50px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.3);
+    animation:drift 8s ease-in-out infinite;
+  }
+  .badge-ring::before{
+    content:''; position:absolute; inset:-1px; border-radius:50%;
+    background:conic-gradient(from 0deg, var(--gold), transparent 30%, transparent 70%, var(--gold));
+    -webkit-mask:radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1px));
+    mask:radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1px));
+    opacity:0.6;
+  }
+  .badge-ring .big{font-size:24px; font-weight:700;}
+  .badge-ring .small{font-size:9.5px; color:var(--cream-dim); margin-top:2px;}
+  .badge-1{bottom:8%; left:38%;}
+
+  @media (max-width: 900px){ .float-card, .badge-ring{display:none;} }
+
+  .scroll-cue{margin-top:70px; font-size:11px; color:var(--cream-dim); display:flex; flex-direction:column; align-items:center; gap:8px; letter-spacing:0.08em;}
+  .scroll-cue .line{width:1px; height:36px; background:linear-gradient(var(--gold), transparent); animation:scrolldown 1.8s ease-in-out infinite;}
+  @keyframes scrolldown{0%{opacity:0.2;} 50%{opacity:1;} 100%{opacity:0.2;}}
+
+  /* ---------------- STATEMENT ---------------- */
+  .statement{
+    padding:180px 48px; text-align:center; max-width:1000px; margin:0 auto;
+  }
+  .statement .tag{
+    display:inline-block; border:1px solid var(--line); border-radius:100px; padding:6px 14px; font-size:12px;
+    color:var(--cream-dim); margin-bottom:30px;
+  }
+  .statement h2{
+    font-size:clamp(30px, 4.4vw, 56px); font-weight:600; line-height:1.15; letter-spacing:-0.01em;
+  }
+  .statement h2 .muted{color:rgba(245,240,230,0.38);}
+  .statement h2 .gold{color:var(--gold);}
+
+  /* ---------------- SHOWCASE ---------------- */
+  .showcase{
+    padding:0 48px 160px; display:flex; align-items:center; gap:80px; max-width:1200px; margin:0 auto; flex-wrap:wrap;
+  }
+  .showcase-visual{
+    flex:1; min-width:340px; aspect-ratio:4/5; border-radius:24px; position:relative; overflow:hidden;
+    background:
+      radial-gradient(circle at 50% 30%, rgba(232,168,87,0.28), transparent 60%),
+      linear-gradient(160deg, #1b1712, #0A0908 70%);
+    border:1px solid var(--line);
+  }
+  .orb{
+    position:absolute; top:50%; left:50%; width:70%; aspect-ratio:1;
+    transform:translate(-50%,-50%); border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, rgba(255,220,170,0.9), rgba(232,168,87,0.5) 40%, rgba(50,35,15,0.2) 75%);
+    filter:blur(1px);
+    animation:orbit 12s ease-in-out infinite;
+  }
+  @keyframes orbit{0%,100%{transform:translate(-50%,-50%) scale(1);} 50%{transform:translate(-50%,-52%) scale(1.05);}}
+  .showcase-visual .ring{
+    position:absolute; top:50%; left:50%; width:88%; aspect-ratio:1; transform:translate(-50%,-50%) rotate(-18deg);
+    border:1px solid rgba(245,240,230,0.18); border-radius:50%;
+  }
+
+  .showcase-text{flex:1; min-width:300px;}
+  .showcase-text h3{font-size:clamp(26px,3vw,38px); font-weight:600; line-height:1.2; margin-bottom:20px;}
+  .showcase-text p{color:var(--cream-dim); font-size:15px; line-height:1.7; max-width:420px; margin-bottom:32px;}
+  .stat-row{display:flex; gap:40px;}
+  .stat-row .stat-num{font-size:30px; font-weight:600; color:var(--gold);}
+  .stat-row .stat-label{font-size:11.5px; color:var(--cream-dim); margin-top:4px; text-transform:uppercase; letter-spacing:0.05em;}
+
+  /* ---------------- WORKFLOW GRID ---------------- */
+  .workflow{padding:0 48px 180px; max-width:1200px; margin:0 auto;}
+  .workflow-head{max-width:600px; margin-bottom:60px;}
+  .workflow-head .tag{display:inline-block; border:1px solid var(--line); border-radius:100px; padding:6px 14px; font-size:12px; color:var(--cream-dim); margin-bottom:22px;}
+  .workflow-head h2{font-size:clamp(28px,3.6vw,44px); font-weight:600; line-height:1.15;}
+  .workflow-grid{display:grid; grid-template-columns:repeat(3, 1fr); gap:24px;}
+  .wf-card{
+    background:linear-gradient(160deg, rgba(245,240,230,0.04), transparent);
+    border:1px solid var(--line); border-radius:20px; padding:28px 26px; min-height:280px;
+    display:flex; flex-direction:column; justify-content:space-between;
+    transition:border-color .3s ease, transform .3s ease;
+  }
+  .wf-card:hover{border-color:var(--gold-deep); transform:translateY(-4px);}
+  .wf-icon{
+    width:44px; height:44px; border-radius:12px; border:1px solid var(--line);
+    display:flex; align-items:center; justify-content:center; font-size:18px; color:var(--gold);
+    background:rgba(232,168,87,0.06);
+  }
+  .wf-card h4{font-size:19px; font-weight:600; margin:22px 0 10px;}
+  .wf-card p{font-size:13.5px; color:var(--cream-dim); line-height:1.6;}
+
+  @media (max-width:860px){ .workflow-grid{grid-template-columns:1fr;} }
+
+  /* ---------------- ASK BAR ---------------- */
+  .ask-section{padding:0 48px 160px; display:flex; justify-content:center;}
+  .ask-bar{
+    width:100%; max-width:720px;
+    background:linear-gradient(155deg, rgba(255,255,255,0.12), rgba(255,255,255,0.02));
+    border:1px solid rgba(255,255,255,0.18); border-radius:100px;
+    padding:8px 8px 8px 26px; display:flex; align-items:center; justify-content:space-between;
+    backdrop-filter:blur(18px); box-shadow:0 20px 50px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.2);
+  }
+  .ask-bar span{color:var(--cream-dim); font-size:14.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .ask-bar button{
+    background:linear-gradient(135deg, var(--gold), var(--gold-deep));
+    color:#1B1206; border:none; border-radius:100px; padding:12px 22px; font-weight:600; font-size:13.5px;
+    display:flex; align-items:center; gap:8px; flex-shrink:0; white-space:nowrap;
+  }
+  @media (max-width:520px){
+    .ask-bar{border-radius:24px; padding:16px; flex-direction:column; align-items:stretch; gap:12px;}
+    .ask-bar span{white-space:normal; text-align:center;}
+    .ask-bar button{justify-content:center;}
+  }
+
+  /* ---------------- GIANT WORDMARK ---------------- */
+  .wordmark-wrap{
+    overflow:hidden; padding-top:40px; border-top:1px solid var(--line);
+  }
+  .wordmark{
+    font-size:clamp(90px, 20vw, 300px); font-weight:800; letter-spacing:-0.02em;
+    color:transparent; -webkit-text-stroke:1px rgba(245,240,230,0.28);
+    text-align:center; line-height:0.8; white-space:nowrap;
+    background:linear-gradient(180deg, rgba(232,168,87,0.15), transparent);
+    -webkit-background-clip:text; background-clip:text;
+  }
+  footer{
+    display:flex; justify-content:space-between; padding:24px 48px 40px; font-size:12px; color:var(--cream-dim);
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="logo"><span class="logo-mark"></span>D.A.I.S.Y</div>
+  <div class="nav-links">
+    <a href="#">Platform</a>
+    <a href="#">Pipelines</a>
+    <a href="#">Agents</a>
+    <a href="#">Docs</a>
+  </div>
+  <a href="#" class="nav-cta">Get demo</a>
+</nav>
+
+<section class="hero">
+  <div class="eyebrow"><span class="dot"></span>Now training on autopilot</div>
+  <h1 class="hero-title">
+    Build <span class="accent">models</span>,<br>
+    <span class="fade">not pipelines.</span>
+  </h1>
+  <p class="hero-sub">Describe your problem, drop in a dataset, and DAISY cleans, engineers, trains, and evaluates the full ML pipeline for you — no notebooks required.</p>
+
+  <div class="hero-cta-row">
+    <a href="#" class="btn-primary">Start a run →</a>
+    <a href="#" class="btn-ghost">Watch it think</a>
+  </div>
+
+  <div class="float-card fc-1">
+    <div class="fc-k"><span>Dataset health</span><span>●</span></div>
+    <div class="fc-v gold">98.2%</div>
+    <div class="fc-bar"><div class="fc-bar-fill" style="width:98%"></div></div>
+    <div class="fc-note">4,894 rows · 0 nulls remaining</div>
+  </div>
+
+  <div class="float-card fc-2">
+    <div class="fc-k"><span>Model accuracy</span><span>↑</span></div>
+    <div class="fc-donut">
+      <svg width="88" height="88" viewBox="0 0 88 88">
+        <circle cx="44" cy="44" r="37" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="9"/>
+        <circle cx="44" cy="44" r="37" fill="none" stroke="#E8A857" stroke-width="9"
+          stroke-dasharray="232.5" stroke-dashoffset="21" stroke-linecap="round"
+          transform="rotate(-90 44 44)"/>
+      </svg>
+      <div class="center-label"><div class="big">91%</div><div class="small">accuracy</div></div>
+    </div>
+    <div class="fc-note">XGBoost · beat baseline by 12pts</div>
+  </div>
+
+  <div class="float-card fc-3">
+    <div class="fc-k"><span>Active agent</span><span class="mono">03</span></div>
+    <div class="fc-v" style="font-size:16px;">Feature engineering</div>
+    <div class="fc-bar"><div class="fc-bar-fill" style="width:41%"></div></div>
+    <div class="fc-note">Encoding 6 categoricals</div>
+  </div>
+
+  <div class="float-card fc-4">
+    <div class="fc-k"><span>Time to train</span><span>~</span></div>
+    <div class="fc-v gold">2m 14s</div>
+    <div class="fc-note">vs. 3hrs by hand</div>
+  </div>
+
+  <div class="badge-ring badge-1">
+    <div class="big">69%</div>
+    <div class="small">automated</div>
+  </div>
+
+  <div class="scroll-cue">SCROLL<div class="line"></div></div>
+</section>
+
+<section class="statement reveal">
+  <div class="tag">Why DAISY</div>
+  <h2>Every model starts the same way — <span class="muted">a messy dataset and a vague idea.</span> DAISY turns that into a <span class="gold">trained, evaluated pipeline</span> before you'd finish setting up your notebook.</h2>
+</section>
+
+<section class="showcase">
+  <div class="showcase-visual reveal">
+    <div class="ring"></div>
+    <div class="orb"></div>
+  </div>
+  <div class="showcase-text reveal">
+    <h3>One conversation replaces the whole pipeline.</h3>
+    <p>Tell DAISY what you're trying to predict. It profiles your data, picks a cleaning strategy, engineers features, tries several models, and hands you the one that actually works — with the reasoning behind every step.</p>
+    <div class="stat-row">
+      <div><div class="stat-num">12+</div><div class="stat-label">Agents orchestrated</div></div>
+      <div><div class="stat-num">40x</div><div class="stat-label">Faster than manual</div></div>
+      <div><div class="stat-num">0</div><div class="stat-label">Lines of code needed</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="workflow">
+  <div class="workflow-head reveal">
+    <div class="tag">The pipeline</div>
+    <h2>One intelligent layer for every stage of the model lifecycle.</h2>
+  </div>
+  <div class="workflow-grid">
+    <div class="wf-card reveal">
+      <div class="wf-icon">◆</div>
+      <div><h4>Clean and understand</h4><p>DAISY profiles your dataset, flags anomalies, and repairs nulls, duplicates, and skew automatically.</p></div>
+    </div>
+    <div class="wf-card reveal">
+      <div class="wf-icon">▦</div>
+      <div><h4>Engineer features</h4><p>Encoding, scaling, interaction terms, and correlation pruning — reasoned about, not just applied.</p></div>
+    </div>
+    <div class="wf-card reveal">
+      <div class="wf-icon">◈</div>
+      <div><h4>Train and evaluate</h4><p>Multiple models trained in parallel, benchmarked, and explained in plain language.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="ask-section reveal">
+  <div class="ask-bar">
+    <span>Ask DAISY to build something...</span>
+    <button>Ask agent →</button>
+  </div>
+</section>
+
+<div class="wordmark-wrap">
+  <div class="wordmark">D A I S Y</div>
+</div>
+
+<footer>
+  <span>© 2026 D.A.I.S.Y — no-code ML orchestration</span>
+  <span>Made for builders</span>
+</footer>
+
+<script>
+  const observer = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{ if(e.isIntersecting) e.target.classList.add('in'); });
+  }, {threshold:0.15});
+  document.querySelectorAll('.reveal').forEach(el=>observer.observe(el));
+</script>
+
+</body>
+</html>

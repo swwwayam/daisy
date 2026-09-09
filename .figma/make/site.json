@@ -1,0 +1,10 @@
+{
+  "description": "This web application offers a fully interactive frontend that replicates an existing design, ensuring all elements are clickable for enhanced user experience.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
