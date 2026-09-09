@@ -24,3 +24,5 @@ backend/*.pyc
 # beside it.
 /.plugins/
 /.opencode-skills/
+# Project documentation
+/docs/
