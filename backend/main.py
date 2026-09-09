@@ -223,20 +223,28 @@ nvidia_client = (
     else None
 )
 
-def generate_ai_text(prompt: str, max_tokens: int = 16384) -> str:
+def generate_ai_text(
+    prompt: str,
+    max_tokens: int = 16384,
+    json_mode: bool = False,
+) -> str:
     if nvidia_client is None:
         raise RuntimeError("NVIDIA_API_KEY is not set on the server.")
 
-    response = nvidia_client.chat.completions.create(
-        model=NVIDIA_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
-        top_p=0.95,
-        max_tokens=max_tokens,
-        stream=False,
-        extra_body={"chat_template_kwargs": {"thinking": False}},
-    )
+    request_kwargs = {
+        "model": NVIDIA_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": max_tokens,
+        "stream": False,
+        "extra_body": {"chat_template_kwargs": {"thinking": False}},
+    }
 
+    if json_mode:
+        request_kwargs["response_format"] = {"type": "json_object"}
+
+    response = nvidia_client.chat.completions.create(**request_kwargs)
     return response.choices[0].message.content or ""
 
 
@@ -519,10 +527,15 @@ class FeatureEngineeringRequest(BaseModel):
 def run_feature_engineering_agent(req: FeatureEngineeringRequest):
     """First agent to use the standardized output envelope (agent_schema.py,
     resolves Decisions.md OD-4). Same Sense -> Reason -> Act discipline as
-    the Data Cleaning Agent — DeepSeek only ever picks from a fixed action
+    the Data Cleaning Agent — Nemotron only ever picks from a fixed action
     menu; pandas/scikit-learn does the actual work."""
+
     if req.dataset_id not in DATASETS:
-        raise HTTPException(status_code=404, detail="Dataset not found. Upload it again.")
+        raise HTTPException(
+            status_code=404,
+            detail="Dataset not found. Upload it again."
+        )
+
     if nvidia_client is None:
         raise HTTPException(
             status_code=503,
@@ -533,41 +546,45 @@ def run_feature_engineering_agent(req: FeatureEngineeringRequest):
     df = DATASETS[req.dataset_id]
 
     with Timer() as timer:
+
         # 1. SENSE
         profile = feature_engineering.profile_for_feature_engineering(
-    df,
-    req.target_column
-)
+            df,
+            req.target_column
+        )
 
         # 2. REASON
         prompt = feature_engineering.build_feature_engineering_prompt(profile)
+
         try:
-            result = generate_ai_text(prompt)
+            # Use native JSON mode so Nemotron does not have to imitate JSON
+            # in free-form text. One bounded call replaces the old retry path.
+            result = generate_ai_text(
+                prompt,
+                max_tokens=2500,
+                json_mode=True,
+            )
             plan = feature_engineering.parse_plan(result)
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Agent reasoning step failed: {e}")
+            raise HTTPException(
+                status_code=502,
+                detail=f"Agent reasoning step failed: {e}"
+            )
 
         # 3. ACT
         engineered_df, steps = feature_engineering.apply_feature_engineering_plan(
-    df,
-    plan["actions"],
-    req.target_column
-)
+            df,
+            plan["actions"],
+            req.target_column
+        )
 
-        # 4. FALLBACK — deterministic safety net for anything DeepSeek's plan
-        # didn't address. Logged as its own distinct action type
-        # ("auto_encode_remaining"), never merged into DeepSeek's own steps,
-        # so the audit trail stays honest about what the AI actually
-        # decided vs. what this fallback caught. See
-        # feature_engineering.py's apply_fallback_encoding() docstring for
-        # the full reasoning — this exists because Model Training's own
-        # guardrail correctly (and intentionally) refuses non-numeric
-        # data rather than guessing, which means the pipeline needs a
-        # guarantee upstream that it never gets there in the first place.
+        # 4. FALLBACK — deterministic safety net for anything Nemotron's plan
+        # didn't address.
         engineered_df, fallback_steps = feature_engineering.apply_fallback_encoding(
-    engineered_df,
-    req.target_column
-)
+            engineered_df,
+            req.target_column
+        )
+
         steps = steps + fallback_steps
 
     engineered_id = f"{req.dataset_id}-engineered"
@@ -581,24 +598,34 @@ def run_feature_engineering_agent(req: FeatureEngineeringRequest):
         dataset_id=req.dataset_id,
         agent="feature_engineering",
         status=status,
-        input_summary={"n_rows": profile["n_rows"], "n_columns": profile["n_columns"]},
+        input_summary={
+            "n_rows": profile["n_rows"],
+            "n_columns": profile["n_columns"],
+        },
         reasoning=plan.get("summary", ""),
         actions=steps,
         output_summary={
             "columns_before": df.columns.tolist(),
             "columns_after": engineered_df.columns.tolist(),
-            "preview": engineered_df.head(5)
-            .astype(object)
-            .where(pd.notnull(engineered_df.head(5)), None)
-            .to_dict(orient="records"),
+            "preview": (
+                engineered_df.head(5)
+                .astype(object)
+                .where(pd.notnull(engineered_df.head(5)), None)
+                .to_dict(orient="records")
+            ),
         },
         metrics={
             "actions_attempted": len(steps),
-            "actions_succeeded": sum(1 for s in steps if s["status"] == "success"),
-            "actions_failed": sum(1 for s in steps if s["status"] == "failed"),
+            "actions_succeeded": sum(
+                1 for s in steps if s["status"] == "success"
+            ),
+            "actions_failed": sum(
+                1 for s in steps if s["status"] == "failed"
+            ),
         },
         execution_time_seconds=timer.elapsed,
     )
+
     record["engineered_dataset_id"] = engineered_id
 
     save_pipeline_result(
@@ -607,8 +634,12 @@ def run_feature_engineering_agent(req: FeatureEngineeringRequest):
         {
             "reasoning": record.get("reasoning", ""),
             "actions": record.get("actions", []),
-            "columns_before": record.get("output_summary", {}).get("columns_before", []),
-            "columns_after": record.get("output_summary", {}).get("columns_after", []),
+            "columns_before": record.get("output_summary", {}).get(
+                "columns_before", []
+            ),
+            "columns_after": record.get("output_summary", {}).get(
+                "columns_after", []
+            ),
         },
         engineered_id,
     )

@@ -2,14 +2,14 @@
 D.A.I.S.Y — Feature Engineering Agent (Phase A, item 1)
 ----------------------------------------------------------
 Same Sense -> Reason -> Act pattern as the Data Cleaning Agent (agents.py).
-Gemini never touches data directly; it only picks from a fixed menu of
+Nemotron never touches data directly; it only picks from a fixed menu of
 actions, executed here deterministically with pandas/scikit-learn.
 
   sense  : profile_for_feature_engineering()  -> stats relevant to feature
                                                   decisions (cardinality,
                                                   skew, correlation, date-
                                                   like column detection)
-  reason : build_feature_engineering_prompt()  -> Gemini returns strict
+  reason : build_feature_engineering_prompt()  -> Nemotron returns strict
                                                    JSON actions
   act    : apply_feature_engineering_plan()    -> pandas/sklearn executes,
                                                    reports success/failed/
@@ -126,10 +126,13 @@ def profile_for_feature_engineering(
 
 FEATURE_ENGINEERING_PROMPT_TEMPLATE = """You are DAISY's Feature Engineering Agent, part of a student's ML pipeline project.
 
-You are given a statistical profile of a dataset that has already been cleaned. \
-Decide the best sequence of feature engineering actions to prepare it for machine \
-learning. Be conservative — only act where the profile clearly justifies it. Every \
+You are given a statistical profile of a dataset that has already been cleaned.
+Decide the best sequence of feature engineering actions to prepare it for machine
+learning. Be conservative — only act where the profile clearly justifies it. Every
 action needs a one-sentence, plain-language reason.
+
+IMPORTANT: the target column is excluded from the profile. Never invent, drop,
+encode, scale, or otherwise transform a target column.
 
 DATASET PROFILE:
 {profile_json}
@@ -156,7 +159,11 @@ Rules:
 - Only use drop_low_variance_column when variance is at or near zero, or unique_count is 1.
 - Only use drop_high_correlation_column on pairs already listed in high_correlation_pairs — pick which of the two to drop and put it in "column", with the kept one in "column_b".
 - Use exact column names as they appear in the profile — never invent columns.
-- Keep actions under 15 items. If no changes are justified, return an empty actions array.
+- Keep actions under 10 items. If no changes are justified, return an empty actions array.
+- Do not generate duplicate actions for the same column.
+- Prefer frequency encoding for categorical columns with more than 10 unique values.
+- Prefer one-hot encoding only for low-cardinality categorical columns (10 or fewer unique values).
+- Do not scale identifier-like columns or columns with unique_ratio >= 0.98.
 - Every action must include a non-empty reasoning string.
 """
 
@@ -166,16 +173,46 @@ def build_feature_engineering_prompt(profile: dict) -> str:
 
 
 def parse_plan(raw_text: str) -> dict:
-    """Same defensive parsing as agents.py — Gemini is asked for strict
-    JSON but sometimes still wraps it in a code fence."""
+    """Parse and validate a feature-engineering plan returned by Nemotron."""
+    text = (raw_text or "").strip()
+    if not text:
+        raise ValueError("Feature engineering agent returned an empty response")
+
     try:
-        plan = json.loads(raw_text)
+        plan = json.loads(text)
     except json.JSONDecodeError:
-        stripped = raw_text.replace("```json", "").replace("```", "").strip()
+        stripped = text.replace("```json", "").replace("```", "").strip()
         plan = json.loads(stripped)
 
     if not isinstance(plan, dict) or not isinstance(plan.get("actions"), list):
         raise ValueError("Feature engineering plan came back in an unexpected shape")
+
+    if len(plan["actions"]) > 10:
+        raise ValueError("Feature engineering plan contains too many actions")
+
+    allowed_types = {
+        "encode_categorical",
+        "scale_numeric",
+        "extract_datetime_features",
+        "drop_low_variance_column",
+        "drop_high_correlation_column",
+    }
+    allowed_strategies = {
+        "onehot", "label", "frequency",
+        "standard", "minmax", "robust",
+        None,
+    }
+
+    for action in plan["actions"]:
+        if not isinstance(action, dict):
+            raise ValueError("Each feature engineering action must be an object")
+        if action.get("type") not in allowed_types:
+            raise ValueError(f"Unsupported feature engineering action: {action.get('type')}")
+        if action.get("strategy") not in allowed_strategies:
+            raise ValueError(f"Unsupported feature engineering strategy: {action.get('strategy')}")
+        if not isinstance(action.get("reasoning"), str) or not action["reasoning"].strip():
+            raise ValueError("Every feature engineering action needs a reasoning string")
+
     return plan
 
 
