@@ -90,7 +90,11 @@ export interface ModelSelectionResult extends AgentResult {
 }
 
 export interface TrainingResult extends AgentResult {
-  output_summary?: { problem_type?: string; primary_metric?: string; best_model?: string | null };
+  output_summary?: {
+    problem_type?: string; primary_metric?: string; best_model?: string | null;
+    model_artifact?: { artifact_id: string; filename: string; model: string; input_columns: string[] } | null;
+    export_error?: string | null;
+  };
 }
 
 export interface EvaluationResult extends AgentResult {
@@ -193,5 +197,11 @@ export const daisy = {
     const match = disposition.match(/filename="?([^"]+)"?/i);
     const filename = match?.[1] || `daisy_${datasetId}.csv`;
     return { blob, filename };
+  },
+
+  async downloadModel(artifactId: string): Promise<Blob> {
+    const res = await fetch(`${BASE_URL}/models/${encodeURIComponent(artifactId)}/download`);
+    if (!res.ok) throw new DaisyApiError(await readError(res), res.status);
+    return res.blob();
   },
 };

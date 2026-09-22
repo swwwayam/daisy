@@ -257,6 +257,8 @@ export function useDaisyRun() {
   const runTraining = useCallback(
     (candidateModels: string[], testSize: number) => {
       if (!s.currentDatasetId || !s.targetColumn || candidateModels.length === 0) return;
+      setS(prev => ({ ...prev, training: null, evaluation: null, bestModel: null,
+        status: { ...prev.status, results: "idle" } }));
       return run(
         "training",
         () =>
@@ -273,8 +275,8 @@ export function useDaisyRun() {
             training: r,
             testSize,
             workflowId: r.workflow_id ?? prev.workflowId,
-            bestModel: r.output_summary?.best_model ?? prev.bestModel,
-            status: { ...prev.status, training: "done", results: "available" },
+            bestModel: r.output_summary?.best_model ?? null,
+            status: { ...prev.status, training: "done", results: r.output_summary?.best_model ? "available" : "idle" },
           }))
       );
     },

@@ -153,6 +153,7 @@ def train_and_evaluate(
     candidate_models: list[str],
     test_size: float = 0.2,
     random_state: int = 42,
+    fitted_models: dict | None = None,
 ) -> dict:
     """The 'act' step. Real fit/predict for every candidate. Each model's
     failure is isolated — reported, not fatal to the whole run."""
@@ -160,6 +161,11 @@ def train_and_evaluate(
     problem_type = problem_info["problem_type"]
 
     X, y, warnings = prepare_training_data(df, target_column)
+
+    if not candidate_models:
+        raise TrainingDataError("Select at least one candidate model")
+    if not 0 < test_size < 1:
+        raise TrainingDataError("test_size must be between 0 and 1")
 
     unknown = [m for m in candidate_models if m not in MODEL_FACTORY]
     if unknown:
@@ -197,6 +203,8 @@ def train_and_evaluate(
                 entry["metrics"] = _regression_metrics(y_test, y_pred)
 
             entry["status"] = "success"
+            if fitted_models is not None:
+                fitted_models[model_name] = estimator
         except Exception as e:  # noqa: BLE001 — isolate failure to this model only
             entry["status"] = "failed"
             entry["message"] = str(e)
@@ -220,6 +228,8 @@ def train_and_evaluate(
         "primary_metric": primary_metric,
         "n_train": len(X_train),
         "n_test": len(X_test),
+        "test_size": test_size,
+        "random_state": random_state,
         "warnings": warnings,
         "results": results,
         "best_model": best_model,

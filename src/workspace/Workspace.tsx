@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Dict } from "../services/daisy";
+import { daisy, type Dict, type TrainingResult } from "../services/daisy";
 import { parseModels, STAGES, type StageId, type StageStatus, useDaisyRun } from "./useDaisyRun";
 import {
   ActionList,
@@ -378,6 +378,7 @@ function TrainingPanel({ run }: { run: Run }) {
         <StatusBadge status={t.status} />
       </div>
       {t.reasoning && <p className="lead">{t.reasoning}</p>}
+      <ModelDownload training={t} />
       <StatChips data={t.output_summary} only={["problem_type", "primary_metric"]} />
       {parsed.length > 0 ? (
         <div className="model-grid">
@@ -420,7 +421,7 @@ function ConfusionMatrix({ data }: { data: Dict }) {
               {row.map((cell, j) => {
                 const max = Math.max(...matrix.flat());
                 const intensity = max ? (cell as number) / max : 0;
-                return <td key={j} style={{ background: `rgba(232,168,87,${0.08 + intensity * 0.5})` }}>{formatValue(cell)}</td>;
+                return <td key={j} style={{ background: `rgba(151,222,213,${0.08 + intensity * 0.5})` }}>{formatValue(cell)}</td>;
               })}
             </tr>
           ))}
@@ -431,6 +432,41 @@ function ConfusionMatrix({ data }: { data: Dict }) {
 }
 
 /* ─── Results / evaluation stage ─── */
+function ModelDownload({ training }: { training: TrainingResult | null }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const artifact = training?.output_summary?.model_artifact;
+  const exportError = training?.output_summary?.export_error;
+  if (!artifact) return exportError ? <p role="alert">{exportError}</p> : null;
+  async function download() {
+    if (!artifact || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const blob = await daisy.downloadModel(artifact.artifact_id);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = artifact.filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Model download failed. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return <div className="model-download">
+    <button className="pill pill-solid" onClick={download} disabled={busy}>
+      {busy ? "Preparing download…" : "Download trained model ↓"}
+    </button>
+    <p>ZIP with the fitted model, saved preprocessing, input schema, and Python prediction script.</p>
+    {error && <p role="alert" className="model-download-error">{error}</p>}
+  </div>;
+}
+
 function ResultsPanel({ run }: { run: Run }) {
   const { state } = run;
   const st = state.status.results;
@@ -448,6 +484,8 @@ function ResultsPanel({ run }: { run: Run }) {
           {t?.output_summary?.primary_metric && <div className="winner-metric mono">{humanize(String(t.output_summary.primary_metric))}</div>}
         </div>
       )}
+
+      <ModelDownload training={t} />
 
       {st !== "done" && st !== "running" && (
         <ReadyState title="Evaluation agent" desc="Runs a deeper diagnostic on the winning model — train/test gap, and per-problem diagnostics." action="Run evaluation" onRun={run.runEvaluation} />
@@ -654,7 +692,7 @@ function ChatDock({ run }: { run: Run }) {
         </div>
       )}
       <div className="ask-bar">
-        <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()}
+        <input aria-label="Ask DAISY about your dataset" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()}
           placeholder={state.upload ? `Ask DAISY about ${state.upload.filename || "your dataset"}…` : "Ask DAISY to build something…"}
           onFocus={() => state.chat.length && setOpen(true)} />
         <button onClick={submit} disabled={state.chatBusy}>{state.chatBusy ? "…" : "Ask agent →"}</button>
@@ -697,6 +735,11 @@ export default function Workspace({ onExit }: { onExit: () => void }) {
         <div className="ws-nav-mid mono">{run.state.workflowId ? `run ${run.state.workflowId.slice(0, 8)}` : "new run"}</div>
         <button className="pill pill-ghost" onClick={() => { run.reset(); setFocus(null); }}>New run</button>
       </header>
+
+      <div className="ws-intro">
+        <p>Your machine-learning workspace</p>
+        <h1>{run.state.upload ? "Follow your data to discovery." : "Start with a little curiosity."}</h1>
+      </div>
 
       <PipelineRail status={run.state.status} active={displayed} onPick={goto} />
 
