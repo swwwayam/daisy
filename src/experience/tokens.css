@@ -1,0 +1,19 @@
+/* Interpreted from the supplied Refero exports in /design-reference.
+   Fixed invalid #15846 and range-valued CSS lengths. Inter is the supplied
+   substitute for PPNeueMontreal; font assets are self-hosted through Vite. */
+:root {
+  --color-void: #000000;
+  --color-bone-white: #ffffff;
+  --color-ash-gray: #9a9a9a;
+  --color-silver-mist: #bdbdbd;
+  --color-electric-iris: #8052ff;
+  --color-saffron-spark: #ffb829;
+  --color-deep-verdant: #15846e;
+  --font-ppneuemontreal: 'Inter Variable', sans-serif;
+  --text-body: 18px;
+  --text-heading-lg: 78px;
+  --text-display: 113px;
+  --page-max-width: 1280px;
+  --section-gap: clamp(60px, 8vw, 120px);
+  --radius-buttons: 24px;
+}

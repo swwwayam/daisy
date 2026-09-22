@@ -301,7 +301,8 @@ ACTION_HANDLERS = {
 def apply_feature_engineering_plan(
     df: pd.DataFrame,
     actions: list[dict],
-    target_column: str | None = None
+    target_column: str | None = None,
+    fitted_steps: list | None = None,
 ) -> tuple[pd.DataFrame, list[dict]]:
     """Runs on a COPY of df — caller decides whether/how to persist the result."""
     df = df.copy()
@@ -321,10 +322,17 @@ def apply_feature_engineering_plan(
             step["status"] = "skipped"
             step["message"] = f"Unknown action type '{action_type}'"
         else:
+            before = df.copy()
             try:
+                if fitted_steps is not None:
+                    from model_export import capture_operation
+                    fitted = capture_operation(df, action)
                 step["message"] = handler(df, action)
                 step["status"] = "success"
+                if fitted_steps is not None:
+                    fitted_steps.append(fitted)
             except Exception as e:  # noqa: BLE001 — surfaced, not swallowed
+                df = before
                 step["status"] = "failed"
                 step["message"] = str(e)
         steps.append(step)
@@ -333,7 +341,8 @@ def apply_feature_engineering_plan(
 
 def apply_fallback_encoding(
     df: pd.DataFrame,
-    target_column: str | None = None
+    target_column: str | None = None,
+    fitted_steps: list | None = None,
 ) -> tuple[pd.DataFrame, list[dict]]:
     """Deterministic safety net, run AFTER Gemini's plan executes.
 
@@ -377,10 +386,17 @@ def apply_fallback_encoding(
                 f"numeric and ready for model training."
             ),
         }
+        before = df.copy()
         try:
+            if fitted_steps is not None:
+                from model_export import capture_operation
+                fitted = capture_operation(df, {"type": "encode_categorical", "column": column, "strategy": strategy})
             step["message"] = _apply_encode_categorical(df, column, strategy)
             step["status"] = "success"
+            if fitted_steps is not None:
+                fitted_steps.append(fitted)
         except Exception as e:  # noqa: BLE001 — surfaced, not swallowed
+            df = before
             step["status"] = "failed"
             step["message"] = str(e)
         steps.append(step)

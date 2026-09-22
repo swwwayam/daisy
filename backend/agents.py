@@ -231,7 +231,7 @@ ACTION_HANDLERS = {
 }
 
 
-def apply_cleaning_plan(df: pd.DataFrame, actions: list[dict]) -> tuple[pd.DataFrame, list[dict]]:
+def apply_cleaning_plan(df: pd.DataFrame, actions: list[dict], fitted_steps: list | None = None) -> tuple[pd.DataFrame, list[dict]]:
     """Runs on a COPY of df — caller decides whether/how to persist the result."""
     df = df.copy()
     steps = []
@@ -243,10 +243,17 @@ def apply_cleaning_plan(df: pd.DataFrame, actions: list[dict]) -> tuple[pd.DataF
             step["status"] = "skipped"
             step["message"] = f"Unknown action type '{action_type}'"
         else:
+            before = df.copy()
             try:
+                if fitted_steps is not None:
+                    from model_export import capture_operation
+                    fitted = capture_operation(df, action)
                 step["message"] = handler(df, action)
                 step["status"] = "success"
+                if fitted_steps is not None:
+                    fitted_steps.append(fitted)
             except Exception as e:  # noqa: BLE001 — surfaced to the user, not swallowed
+                df = before
                 step["status"] = "failed"
                 step["message"] = str(e)
         steps.append(step)

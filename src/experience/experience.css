@@ -1,0 +1,192 @@
+/* Dala-inspired procedural 3D direction. DESIGN_VARIANCE 8, MOTION_INTENSITY 8,
+   VISUAL_DENSITY 2. Reference explicitly calls for black, violet, and light type.
+   Canvas layer 0; page 1; header 10; motion control 40. */
+:root {
+  --surface: #000; --surface-deep: #000; --surface-raised: #111015;
+  --text: #fff; --muted: #bdbdbd; --accent: #b49aff; --phosphor: #fff;
+  --line: rgb(255 255 255 / 14%); --cta: #8052ff;
+  --gold: #b49aff; --gold-deep: #8052ff; --gold-glow: rgb(128 82 255 / 16%);
+  font-family: 'Inter Variable', sans-serif;
+}
+html { scroll-behavior: auto; }
+body { background: #000; }
+::selection { background: #8052ff; color: #fff; }
+.constellation { background: #000; color: #fff; isolation: isolate; overflow: clip; }
+.constellation h1, .constellation h2, .constellation h3, .constellation p { margin: 0; }
+.constellation h1, .constellation h2 { font-weight: 400; letter-spacing: -.055em; }
+.constellation p { font-size: 18px; font-weight: 200; line-height: 1.6; color: var(--color-silver-mist); }
+.constellation main, .cosmic-footer { position: relative; z-index: 1; }
+.particle-scene { position: fixed; inset: 0; width: 100%; height: 100svh; z-index: 0; pointer-events: none; }
+.particle-scene canvas { display: block; width: 100%; height: 100%; }
+.scene-fallback { position: absolute; inset: 0; }
+.scene-fallback i { position: absolute; font-style: normal; opacity: .55; }
+.cosmic-header { position: absolute; z-index: 10; inset: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 28px; height: 90px; padding: 0 6%; }
+.cosmic-brand { display: inline-flex; align-items: center; gap: 12px; font-size: 21px; font-weight: 400; letter-spacing: -.03em; white-space: nowrap; }
+.cosmic-mark { display: inline-block; height: 25px; width: 25px; background: #8052ff; border-radius: 50%; position: relative; }
+.cosmic-mark::after { content: ''; position: absolute; inset: 6px; border-radius: 50%; border: 1px solid #fff; }
+.cosmic-nav { display: flex; gap: 38px; margin-left: auto; margin-right: 28px; }
+.cosmic-nav a { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #9a9a9a; transition: color .2s; }
+.cosmic-nav a:hover { color: #fff; }
+.cosmic-header-actions { display: flex; align-items: center; gap: 15px; }
+.cosmic-header-cta { display: inline-flex; align-items: center; gap: 16px; background: none; border: 1px solid #45424d; border-radius: 24px; padding: 13px 19px; font-size: 11px; text-transform: uppercase; color: #fff; transition: border-color .2s; }
+.cosmic-header-cta:hover { border-color: #b49aff; }
+.cosmic-menu { display: none; border: 0; background: none; color: #fff; padding: 8px; }
+.cosmic-button { display: inline-flex; align-items: center; justify-content: center; gap: 28px; background: #8052ff; color: #fff; min-height: 48px; border-radius: 24px; border: 0; padding: 15px 23px; text-transform: uppercase; font-size: 11px; font-weight: 600; letter-spacing: .035em; white-space: nowrap; transition: transform .25s, background .25s; }
+.cosmic-button:hover { background: #7043ea; transform: translateY(-3px); }
+.cosmic-button:active { transform: scale(.97); }
+.cosmic-text-link { display: inline-flex; align-items: center; gap: 14px; color: #bdbdbd; font-size: 12px; font-weight: 400; background: none; border: 0; padding: 10px 0; white-space: nowrap; }
+.cosmic-text-link:hover { color: #fff; }
+.cosmic-text-link svg { transition: transform .2s; }
+.cosmic-text-link:hover svg { transform: translate(2px,-2px); }
+.cosmic-hero { min-height: 100svh; position: relative; display: flex; align-items: center; padding: 120px 6% 70px; max-width: 1600px; margin: auto; }
+.hero-type { position: relative; width: 100%; pointer-events: none; }
+.hero-type h1 { font-size: clamp(62px, 7.4vw, 113px); line-height: 1.02; max-width: 850px; }
+.hero-line { display: block; overflow: hidden; perspective: 900px; padding-bottom: .08em; }
+.hero-line > span { display: block; transform-origin: center bottom; }
+.hero-intro { margin-top: 35px; }
+.constellation .cosmic-kicker { font-size: 10px; font-weight: 600; letter-spacing: .07em; color: #ffb829; text-transform: uppercase; margin-bottom: 20px; }
+.hero-intro > p:last-child { font-size: 16px; max-width: 390px; }
+.hero-cta { display: flex; align-items: center; gap: 30px; margin-top: 28px; }
+.hero-cta > * { pointer-events: auto; }
+.cosmic-section { max-width: 1280px; margin: 0 auto; padding: 120px 6%; }
+.manifesto { min-height: 95svh; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+.manifesto h2 { max-width: 1000px; font-size: clamp(44px, 6.6vw, 90px); line-height: 1.12; }
+.manifesto p { margin-top: 38px; font-size: 17px; }
+.journey { position: relative; }
+.journey-stage { min-height: 100svh; position: relative; display: flex; align-items: center; max-width: 1600px; margin: 0 auto; padding: 100px 6%; }
+.journey-title { position: absolute; top: 55px; left: 6%; right: 6%; display: flex; justify-content: space-between; gap: 24px; text-transform: uppercase; letter-spacing: .09em; color: #9a9a9a; font-size: 10px; }
+.journey-count { font-variant-numeric: tabular-nums; }
+.story-copy { position: relative; width: 50%; margin-left: auto; min-height: 430px; perspective: 900px; }
+.story-panel { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; transform-origin: center center; }
+.story-panel h2 { font-size: clamp(40px, 4.3vw, 65px); line-height: 1.1; }
+.story-panel h2 em { font-style: normal; color: #9a9a9a; }
+.story-description { max-width: 445px; margin-top: 28px !important; font-size: 17px !important; }
+.story-tags { display: flex; flex-wrap: wrap; gap: 12px 22px; margin-top: 32px; }
+.story-tags span { font-size: 10px; color: #9a9a9a; letter-spacing: .02em; }
+.journey-progress { position: absolute; bottom: 55px; left: 6%; right: 6%; display: flex; justify-content: center; gap: 48px; }
+.journey-progress span { font-size: 11px; color: #6f6f6f; transition: color .4s; }
+.journey-progress span.active { color: #ffb829; }
+.intelligence { padding-top: 180px; display: grid; grid-template-columns: 1.15fr 1fr; gap: 90px; align-items: start; }
+.intelligence h2, .cosmic-faq h2 { font-size: clamp(42px, 5.4vw, 78px); line-height: 1.04; }
+.intelligence h2 span { color: #9a9a9a; }
+.intelligence-body > p { max-width: 430px; }
+.agent-steps { margin: 38px 0; display: grid; gap: 20px; }
+.agent-steps > div { display: grid; grid-template-columns: 85px 1fr; gap: 20px; }
+.agent-steps span { font-size: 15px; }
+.agent-steps p { font-size: 15px; }
+.capabilities { display: flex; justify-content: space-between; gap: 30px; padding-block: 80px 140px; }
+.capabilities strong { font-weight: 400; font-size: clamp(70px, 9vw, 120px); line-height: 1; letter-spacing: -.07em; }
+.capabilities p { margin-top: 18px; font-size: 14px; }
+.cosmic-faq { display: grid; grid-template-columns: 1fr 1.05fr; gap: 100px; padding-top: 60px; }
+.cosmic-questions details { padding-bottom: 26px; }
+.cosmic-questions summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; gap: 20px; align-items: center; padding: 13px 0; font-size: 15px; }
+.cosmic-questions summary::-webkit-details-marker { display: none; }
+.cosmic-questions summary span { font-size: 23px; color: #9a9a9a; transition: transform .25s; }
+.cosmic-questions details[open] summary span { transform: rotate(45deg); }
+.cosmic-questions p { font-size: 15px; margin-top: 10px; padding-right: 30px; }
+.closing { text-align: center; min-height: 75svh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 40px; }
+.closing h2 { font-size: clamp(45px, 6vw, 85px); line-height: 1.08; }
+.closing h2 > span { display: block; overflow: hidden; perspective: 800px; padding-bottom: 8px; }
+.closing-word { display: block; }
+.closing h2 > span:last-child { color: #9a9a9a; }
+.cosmic-footer { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 45px 6% 80px; }
+.cosmic-footer > span { font-size: 11px; color: #9a9a9a; }
+.motion-toggle { position: fixed; z-index: 40; right: 24px; bottom: 20px; padding: 10px 14px; display: flex; align-items: center; gap: 8px; background: #000c; color: #bdbdbd; border: 1px solid #38343e; border-radius: 24px; font-size: 10px; }
+.motion-toggle:hover { color: #fff; }
+.motion-off .particle-scene { position: absolute; height: 100svh; }
+.motion-off .story-copy { display: flex; flex-direction: column; gap: 100px; min-height: 0; }
+.motion-off .story-panel { position: relative; inset: auto; }
+.motion-off .journey-stage { min-height: auto; padding-top: 100px; padding-bottom: 100px; }
+.motion-off .journey-title { position: relative; inset: auto; width: 35%; align-self: flex-start; }
+.motion-off .journey-progress { display: none; }
+
+/* Functional workspace keeps clear surface grouping while adopting the new brand. */
+.ws { font-family: 'Inter Variable', sans-serif; }
+.ws .pill-solid, .ws .ask-bar button { color: #fff; background: #8052ff; }
+.ws .pill { border-radius: 24px; }
+.ws .ws-nav, .ws .stage-card { background: #08070b; }
+.ws .control-card, .ws .float-card, .ws .activity-toggle, .ws .activity-body, .ws .chat-log, .ws .ask-bar { background: #141119; }
+.ws .metric-cell { background: #17131f; }
+.ws .chat-msg.user { background: #8052ff; color: #fff; }
+.ws .logo-mark { background: #8052ff; }
+.ws .dropzone { border-color: #68528e; }
+.ws .rail-node.done .rail-dot { background: #b49aff; border-color: #b49aff; }
+.ws .ws-intro h1 { font-weight: 400; }
+.model-download { display: grid; justify-items: start; gap: 12px; margin: 24px 0; }
+.model-download p { margin: 0; max-width: 560px; font-size: 13px; line-height: 1.5; color: var(--muted); }
+.model-download .model-download-error { color: #ffaaa7; }
+
+@media (max-width: 1100px) and (min-width: 900px) {
+  .hero-type h1 { font-size: 7.1vw; }
+  .intelligence { gap: 48px; }
+  .cosmic-faq { gap: 48px; }
+}
+@media (max-width: 899px) {
+  .cosmic-header { height: 76px; padding-inline: 24px; }
+  .cosmic-brand { font-size: 17px; gap: 9px; }
+  .cosmic-nav { gap: 20px; margin-right: 8px; }
+  .cosmic-nav a { font-size: 10px; }
+  .cosmic-hero { min-height: 980px; align-items: flex-start; padding: 155px 6% 500px; }
+  .hero-type h1 { font-size: clamp(52px, 8.5vw, 77px); }
+  .hero-intro { margin-top: 24px; }
+  .particle-scene, .motion-off .particle-scene { position: absolute; top: 480px; height: 480px; }
+  .cosmic-section { padding: 90px 6%; }
+  .manifesto { min-height: 70svh; background: #000; }
+  .manifesto h2 { font-size: clamp(40px, 7vw, 66px); }
+  .journey { background: #000; }
+  .journey-stage { display: block; min-height: auto; padding: 80px 6%; }
+  .journey-title { position: static; margin-bottom: 60px; }
+  .journey-count { display: none; }
+  .story-copy, .motion-off .story-copy { width: 100%; display: flex; flex-direction: column; gap: 90px; min-height: 0; margin: 0; }
+  .story-panel { position: relative; inset: auto; }
+  .story-panel h2 { font-size: clamp(38px, 6.5vw, 60px); }
+  .journey-progress { display: none; }
+  .intelligence { grid-template-columns: 1fr; gap: 44px; background: #000; }
+  .intelligence-body { max-width: 560px; }
+  .cosmic-faq { grid-template-columns: 1fr; gap: 45px; }
+  .cosmic-faq h2 br { display: none; }
+  .capabilities { gap: 25px; padding-top: 50px; padding-bottom: 80px; }
+  .capabilities strong { font-size: 75px; }
+  .capabilities p { font-size: 12px; max-width: 140px; }
+  .motion-off .journey-title { width: 100%; }
+  .closing { min-height: 65svh; }
+}
+@media (max-width: 600px) {
+  .cosmic-header { height: 74px; gap: 10px; }
+  .cosmic-header-cta { padding: 10px 13px; gap: 10px; font-size: 9px; }
+  .cosmic-header-actions { gap: 6px; }
+  .cosmic-menu { display: flex; }
+  .cosmic-nav { display: none; }
+  .cosmic-nav.open { display: flex; position: absolute; top: 73px; left: 0; right: 0; margin: 0; padding: 20px 24px 30px; flex-direction: column; background: #000; }
+  .cosmic-nav a { font-size: 13px; padding: 8px 0; }
+  .cosmic-hero { min-height: 850px; padding: 140px 24px 410px; }
+  .particle-scene, .motion-off .particle-scene { top: 425px; height: 420px; }
+  .hero-type h1 { font-size: clamp(40px, 10vw, 61px); letter-spacing: -.06em; }
+  .hero-intro > p:last-child { font-size: 15px; }
+  .constellation .cosmic-kicker { font-size: 9px; margin-bottom: 17px; }
+  .hero-cta { gap: 22px; }
+  .cosmic-button { gap: 20px; padding-inline: 20px; font-size: 10px; }
+  .cosmic-text-link { font-size: 11px; gap: 10px; }
+  .cosmic-section { padding: 75px 24px; }
+  .manifesto { min-height: 640px; }
+  .manifesto p { font-size: 15px; }
+  .manifesto h2 { font-size: 43px; }
+  .journey-stage { padding: 55px 24px 70px; }
+  .journey-title { font-size: 9px; }
+  .story-description { font-size: 16px !important; }
+  .story-panel h2 { font-size: 39px; }
+  .intelligence h2, .cosmic-faq h2 { font-size: 45px; }
+  .intelligence-body > p { font-size: 16px; }
+  .capabilities { gap: 20px; flex-wrap: wrap; }
+  .capabilities > div { min-width: 42%; }
+  .capabilities strong { font-size: 72px; }
+  .capabilities > div:last-child { margin-top: 20px; }
+  .closing { min-height: 570px; }
+  .closing h2 { font-size: 41px; }
+  .cosmic-footer { padding: 35px 24px 90px; flex-wrap: wrap; }
+  .cosmic-footer > span { order: 3; width: 100%; }
+  .motion-toggle { right: 16px; bottom: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .constellation *, .constellation *::before, .constellation *::after { animation: none !important; transition: none !important; }
+}
