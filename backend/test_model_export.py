@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 import zipfile
 
 import joblib
@@ -112,28 +112,29 @@ class ModelExportTests(unittest.TestCase):
             np.testing.assert_allclose(transform(bundle, raw), engineered.to_numpy(dtype=float))
 
     def test_api_pipeline_download_survives_memory_reset(self):
-        with TestClient(main.app) as client, patch.dict(main.DATASETS, {}, clear=True), patch.dict(main.DATASET_TRANSFORMS, {}, clear=True), patch.dict(main.DATASET_PARENTS, {}, clear=True), patch.dict(main.PIPELINE_CONTEXT, {}, clear=True):
-            uploaded = client.post("/upload-dataset", files={"file": ("sample.csv", raw_data().to_csv(index=False), "text/csv")})
+        auth = {"Authorization": "Bearer test-session"}
+        with TestClient(main.app) as client, patch.object(main, "validate_access_token", new=AsyncMock(return_value={"id": "test-user"})), patch.dict(main.DATASETS, {}, clear=True), patch.dict(main.DATASET_TRANSFORMS, {}, clear=True), patch.dict(main.DATASET_PARENTS, {}, clear=True), patch.dict(main.PIPELINE_CONTEXT, {}, clear=True):
+            uploaded = client.post("/upload-dataset", headers=auth, files={"file": ("sample.csv", raw_data().to_csv(index=False), "text/csv")})
             self.assertEqual(uploaded.status_code, 200)
             dataset = uploaded.json()["dataset_id"]
             with patch.object(main, "ai_client", object()), patch.object(main, "generate_ai_text", return_value=json.dumps({"summary": "Clean", "actions": [{"type": "impute", "column": "amount", "strategy": "median", "reasoning": "Missing values"}]})):
-                cleaned = client.post("/agents/data-cleaning", json={"dataset_id": dataset}).json()["cleaned_dataset_id"]
+                cleaned = client.post("/agents/data-cleaning", headers=auth, json={"dataset_id": dataset}).json()["cleaned_dataset_id"]
             with patch.object(main, "ai_client", object()), patch.object(main, "generate_ai_text", return_value=json.dumps({"summary": "Encode", "actions": []})):
-                featured = client.post("/agents/feature-engineering", json={"dataset_id": cleaned, "target_column": "target"}).json()["engineered_dataset_id"]
-            response = client.post("/agents/model-training", json={"dataset_id": featured, "target_column": "target", "candidate_models": ["logistic_regression"], "test_size": .2})
+                featured = client.post("/agents/feature-engineering", headers=auth, json={"dataset_id": cleaned, "target_column": "target"}).json()["engineered_dataset_id"]
+            response = client.post("/agents/model-training", headers=auth, json={"dataset_id": featured, "target_column": "target", "candidate_models": ["logistic_regression"], "test_size": .2})
             self.assertEqual(response.status_code, 200, response.text)
             summary = response.json()["output_summary"]
             self.assertIsNone(summary["export_error"], summary)
             identifier = summary["model_artifact"]["artifact_id"]
             main.DATASETS.clear()
             main.DATASET_TRANSFORMS.clear()
-            downloaded = client.get(f"/models/{identifier}/download")
+            downloaded = client.get(f"/models/{identifier}/download", headers=auth)
             self.assertEqual(downloaded.status_code, 200)
             self.assertEqual(downloaded.headers["content-type"], "application/zip")
             self.assertIn("attachment", downloaded.headers["content-disposition"])
             self.assertTrue(zipfile.is_zipfile(io.BytesIO(downloaded.content)))
-            self.assertEqual(client.get("/models/not-a-uuid/download").status_code, 404)
-            self.assertEqual(client.get("/models/00000000-0000-0000-0000-000000000000/download").status_code, 404)
+            self.assertEqual(client.get("/models/not-a-uuid/download", headers=auth).status_code, 404)
+            self.assertEqual(client.get("/models/00000000-0000-0000-0000-000000000000/download", headers=auth).status_code, 404)
 
     def test_failed_candidates_do_not_export_or_reuse_a_winner(self):
         raw = raw_data()[["amount", "target"]].dropna()

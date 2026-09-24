@@ -668,34 +668,72 @@ function ActivityDrawer({ run }: { run: Run }) {
 }
 
 /* ─── chat dock ─── */
+function ChatMessageText({ text }: { text: string }) {
+  const renderInline = (line: string) =>
+    line.split(/(\*\*.*?\*\*)/g).filter(Boolean).map((part, index) =>
+      part.startsWith("**") && part.endsWith("**")
+        ? <strong key={index}>{part.slice(2, -2)}</strong>
+        : <span key={index}>{part}</span>
+    );
+
+  return (
+    <div className="chat-message-text">
+      {text.split("\n").map((line, index) =>
+        line.trim() ? <div key={index}>{renderInline(line)}</div> : <div key={index} className="chat-message-space" aria-hidden="true" />
+      )}
+    </div>
+  );
+}
+
 function ChatDock({ run }: { run: Run }) {
   const { state } = run;
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
+  const [minimized, setMinimized] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   useEffect(() => { scroller.current?.scrollTo({ top: scroller.current.scrollHeight }); }, [state.chat]);
   function submit() {
     if (!q.trim()) return;
+    setMinimized(false);
     setOpen(true);
     run.sendChat(q);
     setQ("");
   }
+
+  if (minimized) {
+    return (
+      <button className="chat-launcher" type="button" onClick={() => { setMinimized(false); setOpen(state.chat.length > 0); }} aria-label="Open DAISY chat">
+        <span className="chat-launcher-orbit" aria-hidden="true" />
+        <span>Ask DAISY</span>
+        {state.chatBusy && <span className="chat-launcher-status" aria-label="DAISY is responding" />}
+      </button>
+    );
+  }
+
   return (
     <div className={`chat-dock ${open && state.chat.length ? "open" : ""}`}>
       {open && state.chat.length > 0 && (
-        <div className="chat-log" ref={scroller}>
-          {state.chat.map((m, i) => (
-            <div key={i} className={`chat-msg ${m.role}`}>
-              {m.pending ? <span className="chat-typing"><span /><span /><span /></span> : m.text}
-            </div>
-          ))}
+        <div className="chat-panel">
+          <div className="chat-panel-head">
+            <span><i aria-hidden="true" /> DAISY agent</span>
+            <button type="button" onClick={() => setMinimized(true)} aria-label="Minimize DAISY chat" title="Minimize chat">−</button>
+          </div>
+          <div className="chat-log" ref={scroller}>
+            {state.chat.map((m, i) => (
+              <div key={i} className={`chat-msg ${m.role}`}>
+                {m.pending ? <span className="chat-typing"><span /><span /><span /></span> : <ChatMessageText text={m.text} />}
+              </div>
+            ))}
+          </div>
         </div>
       )}
       <div className="ask-bar">
         <input aria-label="Ask DAISY about your dataset" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()}
-          placeholder={state.upload ? `Ask DAISY about ${state.upload.filename || "your dataset"}…` : "Ask DAISY to build something…"}
+          placeholder={state.upload ? "Ask about this run…" : "Ask DAISY anything…"}
           onFocus={() => state.chat.length && setOpen(true)} />
-        <button onClick={submit} disabled={state.chatBusy}>{state.chatBusy ? "…" : "Ask agent →"}</button>
+        <button onClick={submit} disabled={state.chatBusy || !q.trim()} aria-label="Send message">
+          {state.chatBusy ? <span className="chat-send-loading">•••</span> : <><span>Send</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9M8.5 3.5 13 8l-4.5 4.5" /></svg></>}
+        </button>
       </div>
     </div>
   );
@@ -716,7 +754,7 @@ function StagePanel({ stage, run, goto }: { stage: StageId; run: Run; goto: (id:
 }
 
 /* ─── Workspace root ─── */
-export default function Workspace({ onExit }: { onExit: () => void }) {
+export default function Workspace({ onExit, onSignOut }: { onExit: () => void; onSignOut: () => void | Promise<void> }) {
   const run = useDaisyRun();
   const [focus, setFocus] = useState<StageId | null>(null);
   const active = actionableStage(run.state.status);
@@ -733,7 +771,10 @@ export default function Workspace({ onExit }: { onExit: () => void }) {
       <header className="ws-nav">
         <button className="logo" onClick={onExit}><span className="logo-mark" />D.A.I.S.Y</button>
         <div className="ws-nav-mid mono">{run.state.workflowId ? `run ${run.state.workflowId.slice(0, 8)}` : "new run"}</div>
-        <button className="pill pill-ghost" onClick={() => { run.reset(); setFocus(null); }}>New run</button>
+        <div className="ws-nav-actions">
+          <button className="pill pill-ghost" onClick={() => { run.reset(); setFocus(null); }}>New run</button>
+          <button className="pill pill-ghost" onClick={onSignOut}>Sign out</button>
+        </div>
       </header>
 
       <div className="ws-intro">

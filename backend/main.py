@@ -43,11 +43,20 @@ from time import perf_counter
 
 import pandas as pd
 import numpy as np
+import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
-from openai import OpenAI, APITimeoutError
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AuthenticationError,
+    BadRequestError,
+    OpenAI,
+    RateLimitError,
+)
 from pydantic import BaseModel
 
 import agents
@@ -61,6 +70,45 @@ from agent_schema import Timer, build_agent_record, new_workflow_id
 load_dotenv()
 
 app = FastAPI(title="D.A.I.S.Y ML Backend", version="0.3.0")
+
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
+SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
+
+
+async def validate_access_token(token: str) -> dict:
+    """Ask Supabase Auth to validate the session token and return its user."""
+    if not SUPABASE_URL or not SUPABASE_PUBLISHABLE_KEY:
+        raise HTTPException(status_code=503, detail="Supabase authentication is not configured on the backend.")
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.get(
+                f"{SUPABASE_URL}/auth/v1/user",
+                headers={"apikey": SUPABASE_PUBLISHABLE_KEY, "Authorization": f"Bearer {token}"},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail="Authentication service is temporarily unavailable.") from exc
+    if response.status_code != 200:
+        raise HTTPException(status_code=401, detail="Invalid or expired session. Sign in again.")
+    user = response.json()
+    if not user.get("id"):
+        raise HTTPException(status_code=401, detail="Supabase returned an invalid user session.")
+    return user
+
+
+@app.middleware("http")
+async def require_authenticated_session(request: Request, call_next):
+    public_paths = {"/", "/docs", "/openapi.json", "/redoc"}
+    if request.method == "OPTIONS" or request.url.path in public_paths:
+        return await call_next(request)
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return JSONResponse(status_code=401, content={"detail": "Sign in to use DAISY."})
+    try:
+        request.state.user = await validate_access_token(token)
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
 
 # Allow the React frontend (localhost:3000) to call this API directly.
 app.add_middleware(
@@ -427,13 +475,36 @@ def chat(req: ChatRequest):
         )
 
     try:
-        result = generate_ai_text(req.message, max_tokens=768, interactive=True, system_prompt=base_prompt)
+        ai_logger.info(
+            "Groq chat request model=%s context_chars=%d message_chars=%d",
+            GROQ_MODEL,
+            len(base_prompt),
+            len(req.message),
+        )
+        result = generate_ai_text(req.message, max_tokens=512, interactive=True, system_prompt=base_prompt)
         return {"reply": result}
     except APITimeoutError:
         return {"reply": "Groq took too long to respond. Please try again in a moment."}
-    except Exception as e:
-        ai_logger.warning("Groq chat failed: %s", type(e).__name__)
-        return {"reply": "⚠️ AI temporarily unavailable (quota or config issue). Try again shortly."}
+    except RateLimitError as error:
+        retry_after = error.response.headers.get("retry-after") if error.response else None
+        wait_hint = f" Wait about {retry_after} seconds, then retry." if retry_after else " Wait briefly, then retry."
+        ai_logger.warning("Groq chat rate limited model=%s retry_after=%s", GROQ_MODEL, retry_after or "unknown")
+        return {"reply": f"Groq's rate limit was reached.{wait_hint}"}
+    except AuthenticationError:
+        ai_logger.error("Groq rejected the configured API key.")
+        return {"reply": "Groq rejected the server API key. Check GROQ_API_KEY in backend/.env."}
+    except BadRequestError as error:
+        ai_logger.warning("Groq rejected chat request model=%s status=%s", GROQ_MODEL, error.status_code)
+        return {"reply": "Groq rejected this chat request. Check the backend terminal for the request status."}
+    except APIConnectionError:
+        ai_logger.warning("Could not connect to Groq model=%s", GROQ_MODEL)
+        return {"reply": "The backend could not connect to Groq. Check your internet connection and retry."}
+    except APIStatusError as error:
+        ai_logger.warning("Groq chat failed model=%s status=%s", GROQ_MODEL, error.status_code)
+        return {"reply": f"Groq returned service error {error.status_code}. Please retry shortly."}
+    except Exception as error:
+        ai_logger.exception("Unexpected Groq chat failure: %s", type(error).__name__)
+        return {"reply": "The AI request failed unexpectedly. Check the backend terminal for details."}
 
 
 class CleaningRequest(BaseModel):

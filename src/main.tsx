@@ -6,6 +6,8 @@ import './index.css'
 import './design.css'
 import './experience/tokens.css'
 import './experience/experience.css'
+import './auth/auth.css'
+import './components/cursor.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

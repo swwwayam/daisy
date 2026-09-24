@@ -3,6 +3,7 @@
  * All backend communication is isolated here — visual components never call fetch directly.
  * Contract per daisy-api-spec.md. Base URL configurable via VITE_DAISY_API_URL.
  */
+import { supabase } from "./supabase";
 
 const BASE_URL = (import.meta.env.VITE_DAISY_API_URL as string | undefined)?.replace(/\/$/, "") || "http://localhost:8000";
 
@@ -30,10 +31,18 @@ async function json<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function authHeaders(extra?: HeadersInit): Promise<Headers> {
+  const { data } = await supabase.auth.getSession();
+  if (!data.session?.access_token) throw new DaisyApiError("Your session has expired. Sign in again.", 401);
+  const headers = new Headers(extra);
+  headers.set("Authorization", `Bearer ${data.session.access_token}`);
+  return headers;
+}
+
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
   return json<T>(res);
@@ -121,12 +130,12 @@ export const daisy = {
   async uploadDataset(file: File): Promise<DatasetSummary> {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch(`${BASE_URL}/upload-dataset`, { method: "POST", body: form });
+    const res = await fetch(`${BASE_URL}/upload-dataset`, { method: "POST", headers: await authHeaders(), body: form });
     return json<DatasetSummary>(res);
   },
 
   async datasetSummary(datasetId: string): Promise<DatasetSummary> {
-    return json(await fetch(`${BASE_URL}/dataset/${encodeURIComponent(datasetId)}/summary`));
+    return json(await fetch(`${BASE_URL}/dataset/${encodeURIComponent(datasetId)}/summary`, { headers: await authHeaders() }));
   },
 
   async chat(message: string, datasetId: string | null): Promise<{ reply: string }> {
@@ -190,7 +199,7 @@ export const daisy = {
   },
 
   async download(datasetId: string): Promise<{ blob: Blob; filename: string }> {
-    const res = await fetch(`${BASE_URL}/dataset/${encodeURIComponent(datasetId)}/download`);
+    const res = await fetch(`${BASE_URL}/dataset/${encodeURIComponent(datasetId)}/download`, { headers: await authHeaders() });
     if (!res.ok) throw new DaisyApiError(await readError(res), res.status);
     const blob = await res.blob();
     const disposition = res.headers.get("Content-Disposition") || "";
@@ -200,7 +209,7 @@ export const daisy = {
   },
 
   async downloadModel(artifactId: string): Promise<Blob> {
-    const res = await fetch(`${BASE_URL}/models/${encodeURIComponent(artifactId)}/download`);
+    const res = await fetch(`${BASE_URL}/models/${encodeURIComponent(artifactId)}/download`, { headers: await authHeaders() });
     if (!res.ok) throw new DaisyApiError(await readError(res), res.status);
     return res.blob();
   },
