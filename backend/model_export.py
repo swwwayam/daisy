@@ -20,6 +20,9 @@ def capture_operation(df, action):
     """Snapshot learned values from the same input used by the stage handler."""
     kind, col = action.get("type"), action.get("column")
     step = {"type": kind, "column": col, "strategy": action.get("strategy")}
+    for key in ("column_b", "value"):
+        if key in action:
+            step[key] = action[key]
     if kind == "impute":
         series = df[col]
         strategy = step["strategy"]
@@ -83,17 +86,29 @@ def artifact_path(artifact_id):
 def export_model(estimator, df, target_column, steps, training_result, dataset_id, workflow_id, source_df=None):
     from daisy_predict import transform
 
-    features = [col for col in df.columns if col != target_column]
-    input_columns = required_columns(features, steps)
+    features = training_result.get("feature_columns") or [col for col in df.columns if col != target_column]
+    input_columns = (
+        training_result.get("input_columns")
+        if training_result.get("leakage_free_preprocessing")
+        else required_columns(features, steps)
+    )
     bundle = {"format_version": 1, "estimator": estimator, "preprocessing": steps,
               "feature_columns": features, "input_columns": input_columns, "target_column": target_column}
     # Fail closed if a future stage handler changes without updating its export replay.
-    if source_df is not None:
+    if source_df is not None and training_result.get("leakage_free_preprocessing"):
+        replayed = transform(bundle, source_df.dropna(subset=[target_column]))
+        if replayed.columns.tolist() != features or replayed.empty:
+            raise AssertionError("Saved preprocessing did not reproduce the trained feature schema")
+    elif source_df is not None:
         complete = df.dropna()
         replayed = transform(bundle, source_df.loc[complete.index])
         np.testing.assert_allclose(replayed.to_numpy(dtype=float), complete[features].to_numpy(dtype=float), rtol=1e-9, atol=1e-9)
     versions = {"scikit-learn": sklearn.__version__, "pandas": pd.__version__,
                 "numpy": np.__version__, "scipy": scipy.__version__, "joblib": joblib.__version__}
+    model_parameters = {
+        key: value if value is None or isinstance(value, (str, int, float, bool)) else str(value)
+        for key, value in estimator.get_params(deep=True).items()
+    }
     identifier = str(uuid.uuid4())
     metadata = {"format_version": 1, "artifact_id": identifier,
                 "created_at": datetime.now(timezone.utc).isoformat(),
@@ -102,11 +117,15 @@ def export_model(estimator, df, target_column, steps, training_result, dataset_i
                 "training_results": training_result["results"], "n_train": training_result["n_train"],
                 "n_test": training_result["n_test"], "dataset_id": dataset_id, "workflow_id": workflow_id,
                 "test_size": training_result["test_size"], "random_state": training_result["random_state"],
+                "dataset_fingerprint": training_result.get("dataset_fingerprint"),
+                "train_index_hash": training_result.get("train_index_hash"),
+                "test_index_hash": training_result.get("test_index_hash"),
+                "leakage_free_preprocessing": training_result.get("leakage_free_preprocessing", False),
                 "python_version": platform.python_version(), "dependencies": versions,
+                "model_parameters": model_parameters,
                 "input_columns": input_columns, "feature_columns": features,
                 "preprocessing_steps": [{k: s[k] for k in ("type", "column", "strategy") if k in s} for s in steps],
                 "limitations": ["Estimator is the exact train-split model scored in training, not a refit on all rows.",
-                    "Existing preprocessing was learned before the train/test split; reported metrics may be optimistic.",
                     "Inference preserves row count. Training-only row removal and target transforms are not replayed.",
                     "Unseen categories: one-hot -> all zeros; label -> -1; frequency -> 0.",
                     "Use only trusted joblib files; loading a pickle-based model can execute code."]}
@@ -115,7 +134,7 @@ def export_model(estimator, df, target_column, steps, training_result, dataset_i
     schema = {"required_columns": input_columns, "feature_columns_after_preprocessing": features,
               "target_column_not_required": target_column,
               "input_dtypes": {col: str(source_df[col].dtype) for col in input_columns} if source_df is not None else {},
-              "feature_dtypes": {col: str(df[col].dtype) for col in features}}
+              "feature_dtypes": training_result.get("feature_dtypes") or {col: str(df[col].dtype) for col in features}}
     readme = f"""# DAISY trained model: {training_result['best_model']}
 
 This package contains the fitted winning estimator and saved preprocessing values.
@@ -146,8 +165,8 @@ calling the estimator directly requires already-transformed features in saved or
 ## Interpretation and trust
 
 This is the exact estimator scored during training, not a newly refitted model.
-The existing workflow learns preprocessing before splitting; its validation metrics
-can be optimistic. This export does not change that evaluation methodology.
+DAISY created the train/test split before fitting imputation, scaling, and encoding;
+the held-out rows did not influence those learned preprocessing values.
 Training-only duplicate/outlier/target-missing row removal is not applied at inference.
 Target values reflect any cleaning performed on the target during the training run.
 Unseen categories map to zero one-hot columns, -1 labels, or zero frequency.

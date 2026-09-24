@@ -806,12 +806,21 @@ def run_model_training_agent(req: ModelTrainingRequest):
     if req.dataset_id in DATASET_PARENTS and req.dataset_id not in DATASET_TRANSFORMS:
         raise HTTPException(status_code=409, detail="This dataset predates saved preprocessing. Upload it again and rerun the pipeline to create a portable model.")
     fitted_models = {}
+    fitted_preprocessing = []
+    source_id = req.dataset_id
+    visited = set()
+    while source_id in DATASET_PARENTS and source_id not in visited:
+        visited.add(source_id)
+        source_id = DATASET_PARENTS[source_id]
 
     with Timer() as timer:
         try:
             result = model_training.train_and_evaluate(
                 df, req.target_column, req.candidate_models, test_size=req.test_size,
                 fitted_models=fitted_models,
+                raw_df=DATASETS[source_id],
+                preprocessing_steps=DATASET_TRANSFORMS.get(req.dataset_id, []),
+                fitted_preprocessing=fitted_preprocessing,
             )
         except model_training.TrainingDataError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -820,14 +829,9 @@ def run_model_training_agent(req: ModelTrainingRequest):
     export_error = None
     if result["best_model"]:
         try:
-            source_id = req.dataset_id
-            visited = set()
-            while source_id in DATASET_PARENTS and source_id not in visited:
-                visited.add(source_id)
-                source_id = DATASET_PARENTS[source_id]
             artifact = model_export.export_model(
                 fitted_models[result["best_model"]], df, req.target_column,
-                DATASET_TRANSFORMS.get(req.dataset_id, []), result, req.dataset_id, workflow_id,
+                fitted_preprocessing, result, req.dataset_id, workflow_id,
                 source_df=DATASETS[source_id],
             )
         except Exception:
@@ -854,7 +858,8 @@ def run_model_training_agent(req: ModelTrainingRequest):
             f"{int((1 - req.test_size) * 100)}/{int(req.test_size * 100)} train/test split. "
             f"Best model selected by {result['primary_metric']} "
             f"({'higher' if result['problem_type'] == 'classification' else 'lower'} is better) "
-            "— this is an objective metric comparison, not an AI judgment call."
+            "— preprocessing was fitted on the training fold only, and this is an "
+            "objective metric comparison rather than an AI judgment call."
         ),
         actions=result["results"],
         output_summary={
@@ -926,11 +931,18 @@ def run_evaluation_agent(req: EvaluationRequest):
 
     workflow_id = req.workflow_id or new_workflow_id()
     df = DATASETS[req.dataset_id]
+    source_id = req.dataset_id
+    visited = set()
+    while source_id in DATASET_PARENTS and source_id not in visited:
+        visited.add(source_id)
+        source_id = DATASET_PARENTS[source_id]
 
     with Timer() as timer:
         try:
             eval_result = evaluation.evaluate_model(
-                df, req.target_column, req.model_name, test_size=req.test_size
+                df, req.target_column, req.model_name, test_size=req.test_size,
+                raw_df=DATASETS[source_id],
+                preprocessing_steps=DATASET_TRANSFORMS.get(req.dataset_id, []),
             )
         except evaluation.TrainingDataError as e:
             raise HTTPException(status_code=400, detail=str(e))

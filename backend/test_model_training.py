@@ -7,6 +7,7 @@ every test here exercises the REAL sklearn training path end-to-end.
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.model_selection import train_test_split
 
 from model_training import (
     TrainingDataError,
@@ -105,6 +106,58 @@ class TestTrainAndEvaluateClassification:
     def test_unknown_model_name_rejected(self, classification_df):
         with pytest.raises(TrainingDataError, match="Unknown"):
             train_and_evaluate(classification_df, "label", ["made_up_classifier"])
+
+    def test_preprocessing_is_fitted_only_on_deterministic_training_fold(self):
+        raw = pd.DataFrame({
+            "amount": np.arange(60, dtype=float),
+            "city": ["A", "B"] * 30,
+            "label": [0, 1] * 30,
+        })
+        train_index, test_index = train_test_split(
+            raw.index, test_size=.2, random_state=42, stratify=raw["label"]
+        )
+        held_out = test_index[0]
+        raw.loc[held_out, "amount"] = 100000.0
+        raw.loc[held_out, "city"] = "TEST_ONLY"
+
+        # This dataframe represents the existing UI preview. Training must ignore
+        # its globally learned values and replay the action specification itself.
+        processed = pd.get_dummies(raw, columns=["city"], dtype=int)
+        steps = [
+            {"type": "normalize"},
+            {"type": "scale_numeric", "column": "amount", "strategy": "standard"},
+            {"type": "encode_categorical", "column": "city", "strategy": "onehot"},
+        ]
+        first_steps = []
+        first = train_and_evaluate(
+            processed,
+            "label",
+            ["logistic_regression"],
+            raw_df=raw,
+            preprocessing_steps=steps,
+            fitted_preprocessing=first_steps,
+        )
+        second_steps = []
+        second = train_and_evaluate(
+            processed,
+            "label",
+            ["logistic_regression"],
+            raw_df=raw,
+            preprocessing_steps=steps,
+            fitted_preprocessing=second_steps,
+        )
+
+        scaler = next(step["scaler"] for step in first_steps if step["type"] == "scale_numeric")
+        assert scaler.mean_[0] == pytest.approx(raw.loc[train_index, "amount"].mean())
+        assert scaler.mean_[0] != pytest.approx(raw["amount"].mean())
+        encoding = next(step for step in first_steps if step["type"] == "encode_categorical")
+        assert "TEST_ONLY" not in encoding["categories"]
+        assert first["leakage_free_preprocessing"] is True
+        assert first["dataset_fingerprint"] == second["dataset_fingerprint"]
+        assert first["train_index_hash"] == second["train_index_hash"]
+        assert first["test_index_hash"] == second["test_index_hash"]
+        assert first["best_model"] == second["best_model"]
+        assert first["results"][0]["metrics"] == second["results"][0]["metrics"]
 
 
 class TestTrainAndEvaluateRegression:

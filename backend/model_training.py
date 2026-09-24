@@ -26,6 +26,7 @@ list. See Decisions.md for the explicit reasoning behind this choice.
                                        involved — this is just sorting.
 """
 
+import hashlib
 import time
 from typing import Any
 
@@ -59,7 +60,7 @@ from model_selection import detect_problem_type
 # sklearn-object construction happening inside model_selection.py, which
 # only ever deals with model NAMES, never instances.
 MODEL_FACTORY = {
-    "logistic_regression": lambda: LogisticRegression(max_iter=1000),
+    "logistic_regression": lambda: LogisticRegression(max_iter=1000, random_state=42),
     "random_forest_classifier": lambda: RandomForestClassifier(random_state=42),
     "gradient_boosting_classifier": lambda: GradientBoostingClassifier(random_state=42),
     "knn_classifier": lambda: KNeighborsClassifier(),
@@ -79,6 +80,157 @@ HIGHER_IS_BETTER = {"classification": True, "regression": False}
 class TrainingDataError(ValueError):
     """Raised for problems that mean training genuinely cannot proceed —
     surfaced to the caller as a clear 400, not a generic crash."""
+
+
+def _hash_index(index: pd.Index) -> str:
+    return hashlib.sha256(repr(index.tolist()).encode("utf-8")).hexdigest()
+
+
+def _dataset_fingerprint(df: pd.DataFrame) -> str:
+    values = pd.util.hash_pandas_object(df, index=True).to_numpy().tobytes()
+    return hashlib.sha256(values).hexdigest()
+
+
+def _fit_recorded_preprocessing(
+    train_df: pd.DataFrame,
+    steps: list[dict],
+    target_column: str,
+) -> tuple[pd.DataFrame, list[dict], list[str]]:
+    """Refit every learned preprocessing value using training rows only."""
+    import agents
+    import feature_engineering
+
+    current = train_df.copy()
+    fitted: list[dict] = []
+    ignored_target_steps: list[str] = []
+    for saved in steps:
+        kind = saved.get("type")
+        column = saved.get("column")
+        if kind == "normalize":
+            fitted.append({"type": "normalize"})
+            continue
+        if column == target_column or kind == "drop_rows_missing_target":
+            ignored_target_steps.append(kind)
+            continue
+
+        action = {
+            key: saved[key]
+            for key in ("type", "column", "strategy", "column_b", "value")
+            if key in saved
+        }
+        if kind == "impute" and action.get("strategy") not in {"mean", "median", "mode"}:
+            action["value"] = saved.get("fill")
+
+        if kind in agents.ACTION_HANDLERS:
+            current, report = agents.apply_cleaning_plan(current, [action], fitted_steps=fitted)
+        elif kind in feature_engineering.ACTION_HANDLERS:
+            current, report = feature_engineering.apply_feature_engineering_plan(
+                current, [action], target_column=target_column, fitted_steps=fitted
+            )
+        else:
+            raise TrainingDataError(f"Cannot reproduce preprocessing step '{kind}' during training")
+        if not report or report[0]["status"] != "success":
+            message = report[0].get("message", "unknown preprocessing failure") if report else "no result"
+            raise TrainingDataError(f"Could not fit preprocessing step '{kind}' on training data: {message}")
+    return current, fitted, ignored_target_steps
+
+
+def prepare_split_data(
+    df: pd.DataFrame,
+    target_column: str,
+    problem_type: str,
+    test_size: float,
+    random_state: int,
+    raw_df: pd.DataFrame | None = None,
+    preprocessing_steps: list[dict] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, dict, list[dict], dict]:
+    """Create a deterministic split and fit preprocessing on its train fold only."""
+    if raw_df is None:
+        X, y, warnings = prepare_training_data(df, target_column)
+        stratify = y if problem_type == "classification" and y.value_counts().min() >= 2 else None
+        try:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=test_size, random_state=random_state, stratify=stratify
+            )
+        except ValueError as exc:
+            raise TrainingDataError(f"Could not create train/test split: {exc}") from exc
+        schema = {
+            "feature_columns": X.columns.tolist(),
+            "input_columns": X.columns.tolist(),
+            "dataset_fingerprint": _dataset_fingerprint(df),
+            "train_index_hash": _hash_index(X_train.index),
+            "test_index_hash": _hash_index(X_test.index),
+            "leakage_free_preprocessing": False,
+        }
+        return X_train, X_test, y_train, y_test, warnings, list(preprocessing_steps or []), schema
+
+    if target_column not in raw_df.columns:
+        raise TrainingDataError(f"Target column '{target_column}' not found in original dataset")
+    source = raw_df.copy()
+    if any(step.get("type") == "normalize" for step in preprocessing_steps or []):
+        source = source.replace(r"^\s*$", np.nan, regex=True)
+        missing_tokens = ["NA", "N/A", "na", "n/a", "NULL", "null", "None", "none", "?", "-"]
+        for column in source.select_dtypes(include=["object", "string"]).columns:
+            source[column] = source[column].replace(missing_tokens, np.nan)
+    missing_target_count = int(source[target_column].isna().sum())
+    source = source.dropna(subset=[target_column])
+    remove_duplicates = any(step.get("type") == "drop_duplicates" for step in preprocessing_steps or [])
+    duplicate_count = int(source.duplicated().sum()) if remove_duplicates else 0
+    if remove_duplicates:
+        # Exact duplicates must not be allowed to land on opposite sides of the
+        # split. Removing them uses no learned statistics and is deterministic.
+        source = source.drop_duplicates()
+    if len(source) < 10:
+        raise TrainingDataError("Not enough rows with a target value to create a meaningful train/test split")
+
+    y_for_split = source[target_column]
+    stratify = y_for_split if problem_type == "classification" and y_for_split.value_counts().min() >= 2 else None
+    try:
+        train_index, test_index = train_test_split(
+            source.index, test_size=test_size, random_state=random_state, stratify=stratify
+        )
+    except ValueError as exc:
+        raise TrainingDataError(f"Could not create train/test split: {exc}") from exc
+
+    transformed_train, fitted_steps, ignored = _fit_recorded_preprocessing(
+        source.loc[train_index], list(preprocessing_steps or []), target_column
+    )
+    X_train, y_train, train_warnings = prepare_training_data(transformed_train, target_column)
+
+    from daisy_predict import transform
+    from model_export import required_columns
+
+    feature_columns = X_train.columns.tolist()
+    input_columns = required_columns(feature_columns, fitted_steps)
+    bundle = {
+        "input_columns": input_columns,
+        "feature_columns": feature_columns,
+        "target_column": target_column,
+        "preprocessing": fitted_steps,
+    }
+    try:
+        X_test = transform(bundle, source.loc[test_index])
+    except (ValueError, TypeError) as exc:
+        raise TrainingDataError(f"Could not transform the held-out test data: {exc}") from exc
+    y_test = source.loc[test_index, target_column]
+
+    warnings = {
+        "rows_dropped_for_missing_values": train_warnings["rows_dropped_for_missing_values"],
+        "rows_missing_target_excluded_before_split": missing_target_count,
+        "duplicate_rows_excluded_before_split": duplicate_count,
+        "rows_used": len(X_train) + len(X_test),
+        "target_preprocessing_ignored": sorted(set(ignored)),
+    }
+    schema = {
+        "feature_columns": feature_columns,
+        "input_columns": input_columns,
+        "feature_dtypes": {column: str(X_train[column].dtype) for column in feature_columns},
+        "dataset_fingerprint": _dataset_fingerprint(raw_df),
+        "train_index_hash": _hash_index(X_train.index),
+        "test_index_hash": _hash_index(X_test.index),
+        "leakage_free_preprocessing": True,
+    }
+    return X_train, X_test, y_train, y_test, warnings, fitted_steps, schema
 
 
 def prepare_training_data(
@@ -154,13 +306,14 @@ def train_and_evaluate(
     test_size: float = 0.2,
     random_state: int = 42,
     fitted_models: dict | None = None,
+    raw_df: pd.DataFrame | None = None,
+    preprocessing_steps: list[dict] | None = None,
+    fitted_preprocessing: list | None = None,
 ) -> dict:
     """The 'act' step. Real fit/predict for every candidate. Each model's
     failure is isolated — reported, not fatal to the whole run."""
     problem_info = detect_problem_type(df, target_column)
     problem_type = problem_info["problem_type"]
-
-    X, y, warnings = prepare_training_data(df, target_column)
 
     if not candidate_models:
         raise TrainingDataError("Select at least one candidate model")
@@ -182,10 +335,17 @@ def train_and_evaluate(
             f"These models don't match the detected problem type ({problem_type}): {wrong_bucket}"
         )
 
-    stratify = y if problem_type == "classification" and y.value_counts().min() >= 2 else None
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state, stratify=stratify
+    X_train, X_test, y_train, y_test, warnings, fitted_steps, schema = prepare_split_data(
+        df,
+        target_column,
+        problem_type,
+        test_size,
+        random_state,
+        raw_df=raw_df,
+        preprocessing_steps=preprocessing_steps,
     )
+    if fitted_preprocessing is not None:
+        fitted_preprocessing.extend(fitted_steps)
 
     results = []
     for model_name in candidate_models:
@@ -230,6 +390,13 @@ def train_and_evaluate(
         "n_test": len(X_test),
         "test_size": test_size,
         "random_state": random_state,
+        "feature_columns": schema["feature_columns"],
+        "input_columns": schema["input_columns"],
+        "feature_dtypes": schema.get("feature_dtypes", {}),
+        "dataset_fingerprint": schema["dataset_fingerprint"],
+        "train_index_hash": schema["train_index_hash"],
+        "test_index_hash": schema["test_index_hash"],
+        "leakage_free_preprocessing": schema["leakage_free_preprocessing"],
         "warnings": warnings,
         "results": results,
         "best_model": best_model,

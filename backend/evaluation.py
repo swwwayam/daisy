@@ -43,8 +43,8 @@ import json
 from typing import Any
 
 import numpy as np
+import pandas as pd
 from sklearn.metrics import confusion_matrix
-from sklearn.model_selection import train_test_split
 
 from model_selection import detect_problem_type
 from model_training import (
@@ -52,7 +52,7 @@ from model_training import (
     TrainingDataError,
     _classification_metrics,
     _regression_metrics,
-    prepare_training_data,
+    prepare_split_data,
 )
 
 VALID_VERDICTS = {"good", "moderate", "poor"}
@@ -71,6 +71,8 @@ def evaluate_model(
     model_name: str,
     test_size: float = 0.2,
     random_state: int = 42,
+    raw_df=None,
+    preprocessing_steps: list[dict] | None = None,
 ) -> dict:
     """The 'sense' step. Fully deterministic — re-trains just the one
     requested model to get real predictions for real diagnostics."""
@@ -80,11 +82,14 @@ def evaluate_model(
     problem_info = detect_problem_type(df, target_column)
     problem_type = problem_info["problem_type"]
 
-    X, y, warnings = prepare_training_data(df, target_column)
-
-    stratify = y if problem_type == "classification" and y.value_counts().min() >= 2 else None
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state, stratify=stratify
+    X_train, X_test, y_train, y_test, warnings, _, _ = prepare_split_data(
+        df,
+        target_column,
+        problem_type,
+        test_size,
+        random_state,
+        raw_df=raw_df,
+        preprocessing_steps=preprocessing_steps,
     )
 
     estimator = MODEL_FACTORY[model_name]()
@@ -105,7 +110,7 @@ def evaluate_model(
         result["train_metrics"] = _classification_metrics(y_train, y_pred_train, None)
         result["test_metrics"] = _classification_metrics(y_test, y_pred_test, y_proba_test)
 
-        labels = sorted(y.unique().tolist())
+        labels = sorted(pd.concat([y_train, y_test]).unique().tolist())
         cm = confusion_matrix(y_test, y_pred_test, labels=labels)
         result["confusion_matrix"] = {
             "labels": [str(l) for l in labels],
