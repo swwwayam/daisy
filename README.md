@@ -432,13 +432,25 @@ constraints, testing, and rollback information.
 
 ## 📌 Project Status
 
-**D.A.I.S.Y. is an active final-year project under development.**
+**D.A.I.S.Y. v03 — Active Development**
 
-The current version focuses on creating an interactive, agent-driven
-automated ML workflow where AI reasoning is combined with deterministic
-Python execution and grounded explanations.
+The current version focuses on improving the automated ML workflow, frontend experience, AI-assisted interaction, model training performance, and overall usability.
+
+D.A.I.S.Y. is actively being developed and tested as a final-year academic project.
 
 ------------------------------------------------------------------------
+## 🆕 What's New in v03
+
+D.A.I.S.Y. v03 introduces improvements across the platform:
+
+- Faster AI-assisted pipeline interactions
+- Improved frontend workspace experience
+- Enhanced dataset processing workflow
+- Improved model training and evaluation flow
+- Prediction workflow support
+- Improved error handling and diagnostics
+- Continued refinement of the agent-driven ML pipeline
+ ------------------------------------------------------------------------
 
 ## 👥 Contributors
 
