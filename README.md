@@ -415,6 +415,12 @@ If `pytest` is not installed in your environment:
 pip install pytest
 ```
 
+Check frontend types from the project root with:
+
+``` powershell
+npm run typecheck
+```
+
 ------------------------------------------------------------------------
 
 ## 🛣️ Future Scope
