@@ -151,11 +151,12 @@ The actual dataset transformations, model fitting, predictions, and metric calcu
 
 ### Frontend
 
--   React
--   TypeScript / JavaScript
--   Vite
--   CSS
--   Interactive pipeline/workspace UI
+- React
+- TypeScript
+- Vite
+- Tailwind CSS
+- Interactive pipeline/workspace UI
+- Responsive dashboard experience
 
 ### Backend
 
