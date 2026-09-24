@@ -139,18 +139,16 @@ The current version uses **Groq** with the configurable
 The backend communicates with Groq's OpenAI-compatible API using the
 Python `openai` client.
 
-The AI model is primarily used for:
+The AI model is used primarily for:
 
--   Cleaning-plan generation
--   EDA interpretation
--   Feature-engineering planning
--   Model-selection reasoning
--   Evaluation interpretation
--   Natural-language explanations through D.A.I.S.Y. Chat
+- Cleaning-plan generation
+- EDA interpretation
+- Feature-engineering planning
+- Model-selection reasoning
+- Evaluation interpretation
+- Natural-language explanations through D.A.I.S.Y. Chat
 
-The actual dataset transformations, model fitting, predictions, and
-metric calculations are performed by the backend rather than being
-delegated to the language model.
+The actual dataset transformations, model fitting, predictions, and metric calculations are performed deterministically by the backend rather than being delegated to the language model.
 
 ------------------------------------------------------------------------
 
@@ -158,11 +156,12 @@ delegated to the language model.
 
 ### Frontend
 
--   React
--   TypeScript / JavaScript
--   Vite
--   CSS
--   Interactive pipeline/workspace UI
+- React
+- TypeScript
+- Vite
+- Tailwind CSS
+- Interactive pipeline/workspace UI
+- Responsive dashboard experience
 
 ### Backend
 
@@ -450,13 +449,25 @@ constraints, testing, and rollback information.
 
 ## 📌 Project Status
 
-**D.A.I.S.Y. is an active final-year project under development.**
+**D.A.I.S.Y. v03 — Active Development**
 
-The current version focuses on creating an interactive, agent-driven
-automated ML workflow where AI reasoning is combined with deterministic
-Python execution and grounded explanations.
+The current version focuses on improving the automated ML workflow, frontend experience, AI-assisted interaction, model training performance, and overall usability.
+
+D.A.I.S.Y. is actively being developed and tested as a final-year academic project.
 
 ------------------------------------------------------------------------
+## 🆕 What's New in v03
+
+D.A.I.S.Y. v03 introduces improvements across the platform:
+
+- Faster AI-assisted pipeline interactions
+- Improved frontend workspace experience
+- Enhanced dataset processing workflow
+- Improved model training and evaluation flow
+- Prediction workflow support
+- Improved error handling and diagnostics
+- Continued refinement of the agent-driven ML pipeline
+ ------------------------------------------------------------------------
 
 ## 👥 Contributors
 
