@@ -132,11 +132,11 @@ processing.
 
 ## 🤖 AI Integration
 
-The current version uses **NVIDIA NIM** with:
+The current version uses **Groq** with the configurable
+`GROQ_MODEL` environment variable. The default model is
+`openai/gpt-oss-120b`.
 
-**Model:** `deepseek-ai/deepseek-v4-pro-0813`
-
-The backend communicates with NVIDIA's OpenAI-compatible API using the
+The backend communicates with Groq's OpenAI-compatible API using the
 Python `openai` client.
 
 The AI model is primarily used for:
@@ -174,9 +174,15 @@ delegated to the language model.
 
 ### AI
 
--   NVIDIA NIM
--   DeepSeek V4 Pro
+-   Groq
+-   GPT OSS 120B
 -   OpenAI-compatible API client
+
+### SaaS foundation
+
+-   Supabase Auth with email and Google OAuth
+-   PostgreSQL with Row Level Security
+-   Private dataset and model-artifact storage buckets
 
 ### Development
 
@@ -248,8 +254,8 @@ Create and activate a Python virtual environment:
 
 ``` powershell
 cd backend
-py -3.11 -m venv venv
-.\venv\Scripts\Activate.ps1
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 ```
 
 Install the backend dependencies:
@@ -258,29 +264,28 @@ Install the backend dependencies:
 pip install -r requirements.txt
 ```
 
-### 3. Configure the AI API
+### 3. Configure environment variables
 
-Create:
+Copy the provided templates:
 
-``` text
-backend/.env
+``` powershell
+Copy-Item .env.example .env.local
+Copy-Item backend/.env.example backend/.env
 ```
 
-Add your NVIDIA credentials:
+Fill in the Supabase project URL and publishable key in `.env.local`.
+Fill in the Groq and Supabase server values in `backend/.env`.
 
-``` env
-NVIDIA_API_KEY=your_nvidia_api_key
-NVIDIA_MODEL=deepseek-ai/deepseek-v4-pro-0813
-```
-
-**Never commit `backend/.env` to GitHub.**
+The publishable key may be used by the browser. Keep
+`SUPABASE_SECRET_KEY` and `GROQ_API_KEY` on the backend only. Local
+environment files are ignored by Git.
 
 ### 4. Start the backend
 
 From the `backend` directory:
 
 ``` powershell
-uvicorn main:app --reload --port 8000
+.\.venv\Scripts\python.exe -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 The API will be available at:
@@ -298,10 +303,10 @@ npm install
 npm run dev
 ```
 
-Vite will provide the local frontend URL in the terminal, typically:
+Vite will provide the local frontend URL:
 
 ``` text
-http://localhost:5173
+http://localhost:8443
 ```
 
 ------------------------------------------------------------------------
@@ -378,7 +383,8 @@ such as:
 
 ``` text
 backend/.env
-backend/venv/
+backend/.venv/
+.env.local
 node_modules/
 dist/
 build/
