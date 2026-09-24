@@ -132,25 +132,18 @@ processing.
 
 ## 🤖 AI Integration
 
-The current version uses **NVIDIA NIM** with:
+The current version uses **Groq** for fast LLM inference through an OpenAI-compatible API.
 
-**Model:** `deepseek-ai/deepseek-v4-pro-0813`
+The AI model is used primarily for:
 
-The backend communicates with NVIDIA's OpenAI-compatible API using the
-Python `openai` client.
+- Cleaning-plan generation
+- EDA interpretation
+- Feature-engineering planning
+- Model-selection reasoning
+- Evaluation interpretation
+- Natural-language explanations through D.A.I.S.Y. Chat
 
-The AI model is primarily used for:
-
--   Cleaning-plan generation
--   EDA interpretation
--   Feature-engineering planning
--   Model-selection reasoning
--   Evaluation interpretation
--   Natural-language explanations through D.A.I.S.Y. Chat
-
-The actual dataset transformations, model fitting, predictions, and
-metric calculations are performed by the backend rather than being
-delegated to the language model.
+The actual dataset transformations, model fitting, predictions, and metric calculations are performed deterministically by the backend rather than being delegated to the language model.
 
 ------------------------------------------------------------------------
 
