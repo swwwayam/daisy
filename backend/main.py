@@ -73,6 +73,7 @@ app = FastAPI(title="D.A.I.S.Y ML Backend", version="0.3.0")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "50")) * 1024 * 1024
 
 
 async def validate_access_token(token: str) -> dict:
@@ -331,13 +332,21 @@ def health_check():
 
 @app.post("/upload-dataset")
 async def upload_dataset(file: UploadFile = File(...)):
-    if not file.filename.lower().endswith(".csv"):
+    if not (file.filename or "").lower().endswith(".csv"):
         raise HTTPException(
             status_code=400,
             detail="Only CSV files are supported right now."
         )
 
-    raw_bytes = await file.read()
+    # Read at most one byte beyond the configured ceiling so oversized
+    # uploads never need to be held completely in server memory.
+    raw_bytes = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw_bytes) > MAX_UPLOAD_BYTES:
+        limit_mb = MAX_UPLOAD_BYTES // (1024 * 1024)
+        raise HTTPException(
+            status_code=413,
+            detail=f"Dataset exceeds the {limit_mb} MB upload limit."
+        )
 
     try:
         df = pd.read_csv(
