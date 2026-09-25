@@ -38,7 +38,7 @@ def capture_operation(df, action):
         step["fill"] = fill
     elif kind == "handle_outliers":
         q1, q3 = df[col].quantile(.25), df[col].quantile(.75)
-        step.update(lower=q1 - 1.5 * (q3 - q1), upper=q3 + 1.5 * (q3 - q1))
+        step.update(lower=q1 - 1.5 * (q3 - q1), upper=q3 + 1.5 * (q3 - q1), preserve_zero=True)
     elif kind == "strip_whitespace":
         step["columns"] = [col] if col else df.select_dtypes(include=["object", "string"]).columns.tolist()
     elif kind == "scale_numeric":

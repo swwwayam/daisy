@@ -57,6 +57,7 @@ export interface DatasetSummary {
   numerical_columns?: string[];
   categorical_columns?: string[];
   missing_values?: Record<string, number>;
+  zero_values?: Record<string, number>;
   duplicate_rows?: number;
   preview?: Dict[];
   dataset_id?: string;
@@ -142,8 +143,8 @@ export const daisy = {
     return postJson("/chat", { message, dataset_id: datasetId });
   },
 
-  async dataCleaning(datasetId: string): Promise<CleaningResult> {
-    return postJson("/agents/data-cleaning", { dataset_id: datasetId });
+  async dataCleaning(datasetId: string, zeroAsMissing: string[] = []): Promise<CleaningResult> {
+    return postJson("/agents/data-cleaning", { dataset_id: datasetId, zero_as_missing: zeroAsMissing });
   },
 
   async eda(datasetId: string): Promise<AgentResult & { summary?: string }> {

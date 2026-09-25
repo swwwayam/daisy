@@ -111,6 +111,23 @@ class ModelExportTests(unittest.TestCase):
             bundle = {"input_columns": list(raw.columns), "feature_columns": list(engineered.columns), "target_column": "target", "preprocessing": steps}
             np.testing.assert_allclose(transform(bundle, raw), engineered.to_numpy(dtype=float))
 
+    def test_explicit_zero_policy_is_replayed_at_inference(self):
+        raw = pd.DataFrame({"Glucose": [0.0, 90.0, 100.0, np.nan]})
+        steps = []
+        cleaned, _ = agents.apply_cleaning_plan(raw, [
+            {"type": "zero_to_missing", "column": "Glucose", "reasoning": "user policy"},
+            {"type": "impute", "column": "Glucose", "strategy": "median", "reasoning": "fill missing"},
+        ], fitted_steps=steps)
+        bundle = {
+            "input_columns": ["Glucose"],
+            "feature_columns": ["Glucose"],
+            "target_column": "target",
+            "preprocessing": steps,
+        }
+        replayed = transform(bundle, pd.DataFrame({"Glucose": [0.0, 110.0]}))
+        self.assertEqual(replayed.loc[0, "Glucose"], cleaned["Glucose"].median())
+        self.assertEqual(replayed.loc[1, "Glucose"], 110.0)
+
     def test_api_pipeline_download_survives_memory_reset(self):
         auth = {"Authorization": "Bearer test-session"}
         with TestClient(main.app) as client, patch.object(main, "validate_access_token", new=AsyncMock(return_value={"id": "test-user"})), patch.dict(main.DATASETS, {}, clear=True), patch.dict(main.DATASET_TRANSFORMS, {}, clear=True), patch.dict(main.DATASET_PARENTS, {}, clear=True), patch.dict(main.PIPELINE_CONTEXT, {}, clear=True):
