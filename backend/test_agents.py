@@ -103,6 +103,15 @@ class TestApplyCleaningPlan:
         )
         assert result_df.loc[0, "Balconies"] == 0
 
+    def test_explicit_policy_can_convert_zero_to_missing(self):
+        df = pd.DataFrame({"Glucose": [0.0, 90.0, 100.0]})
+        result_df, steps = apply_cleaning_plan(
+            df, [{"type": "zero_to_missing", "column": "Glucose", "reasoning": "user policy"}]
+        )
+        assert steps[0]["status"] == "success"
+        assert pd.isna(result_df.loc[0, "Glucose"])
+        assert result_df.loc[1, "Glucose"] == 90
+
     def test_noop_imputation_is_skipped_and_zeros_are_preserved(self):
         df = pd.DataFrame({"Balconies": [0, 1, 2]})
         result_df, steps = apply_cleaning_plan(

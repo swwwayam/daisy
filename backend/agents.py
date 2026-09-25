@@ -170,6 +170,16 @@ def _apply_impute(df, column, strategy, value):
     return f"Filled {before} missing value(s) in '{column}' using {strategy} ({_json_safe(fill)})"
 
 
+def _apply_zero_to_missing(df, column, **_):
+    if column not in df.columns:
+        raise ValueError(f"Column '{column}' not found")
+    if not pd.api.types.is_numeric_dtype(df[column]):
+        raise ValueError(f"Column '{column}' is not numeric")
+    zero_count = int(df[column].eq(0).sum())
+    df[column] = df[column].mask(df[column].eq(0))
+    return f"Converted {zero_count} zero value(s) in '{column}' to missing by explicit user policy"
+
+
 def _apply_drop_column(df, column, **_):
     if column not in df.columns:
         raise ValueError(f"Column '{column}' not found")
@@ -239,6 +249,7 @@ def _apply_drop_rows_missing_target(df, column, **_):
 
 ACTION_HANDLERS = {
     "drop_duplicates": lambda df, a: _apply_drop_duplicates(df),
+    "zero_to_missing": lambda df, a: _apply_zero_to_missing(df, a.get("column")),
     "impute": lambda df, a: _apply_impute(df, a.get("column"), a.get("strategy"), a.get("value")),
     "drop_column": lambda df, a: _apply_drop_column(df, a.get("column")),
     "fix_dtype": lambda df, a: _apply_fix_dtype(df, a.get("column"), a.get("strategy")),

@@ -40,6 +40,8 @@ def transform(bundle, data):
             df = df.drop(columns=[col], errors="ignore")
         elif col not in df:
             continue  # Target-only and unused-column operations are not needed at inference.
+        elif kind == "zero_to_missing":
+            df[col] = df[col].mask(df[col].eq(0))
         elif kind == "impute":
             df[col] = df[col].fillna(step["fill"])
         elif kind == "fix_dtype":
@@ -52,7 +54,10 @@ def transform(bundle, data):
                 df[col] = df[col].astype("category")
         elif kind == "handle_outliers":
             if step["strategy"] == "iqr_clip":
+                zero_mask = df[col].eq(0) if step.get("preserve_zero") else None
                 df[col] = df[col].clip(lower=step["lower"], upper=step["upper"])
+                if zero_mask is not None:
+                    df[col] = df[col].mask(zero_mask, 0)
             # Training-only row removal is never applied to inference batches.
         elif kind == "scale_numeric":
             df[col] = step["scaler"].transform(df[[col]].astype(float)).ravel()

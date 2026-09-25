@@ -57,7 +57,7 @@ from openai import (
     OpenAI,
     RateLimitError,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import agents
 import evaluation
@@ -411,6 +411,11 @@ def build_schema_report(df: pd.DataFrame) -> dict:
 
     missing_values = df.isnull().sum()
     missing_report = {col: int(count) for col, count in missing_values.items() if count > 0}
+    zero_values = {
+        col: int(df[col].eq(0).sum())
+        for col in numerical_cols
+        if int(df[col].eq(0).sum()) > 0
+    }
 
     return {
         "rows": int(df.shape[0]),
@@ -418,6 +423,7 @@ def build_schema_report(df: pd.DataFrame) -> dict:
         "numerical_columns": numerical_cols,
         "categorical_columns": categorical_cols,
         "missing_values": missing_report,
+        "zero_values": zero_values,
         "duplicate_rows": int(df.duplicated().sum()),
         # NaN isn't valid JSON. Casting to object first stops pandas from
         # silently converting None back to NaN on float columns.
@@ -518,6 +524,7 @@ def chat(req: ChatRequest):
 
 class CleaningRequest(BaseModel):
     dataset_id: str
+    zero_as_missing: list[str] = Field(default_factory=list)
 
 
 @app.post("/agents/data-cleaning")
@@ -532,8 +539,28 @@ def run_data_cleaning_agent(req: CleaningRequest):
 
     df = DATASETS[req.dataset_id]
 
+    unknown_policy_columns = [column for column in req.zero_as_missing if column not in df.columns]
+    non_numeric_policy_columns = [
+        column for column in req.zero_as_missing
+        if column in df.columns and not pd.api.types.is_numeric_dtype(df[column])
+    ]
+    if unknown_policy_columns:
+        raise HTTPException(status_code=400, detail=f"Unknown zero-policy columns: {unknown_policy_columns}")
+    if non_numeric_policy_columns:
+        raise HTTPException(status_code=400, detail=f"Zero-as-missing requires numeric columns: {non_numeric_policy_columns}")
+
+    policy_actions = [
+        {
+            "type": "zero_to_missing",
+            "column": column,
+            "reasoning": "The user explicitly marked zero as a missing-value sentinel for this column.",
+        }
+        for column in dict.fromkeys(req.zero_as_missing)
+    ]
+    semantic_df, _ = agents.apply_cleaning_plan(df, policy_actions)
+
     # 1. SENSE — profile the data (stats only, never raw rows go to the LLM)
-    profile = agents.profile_dataframe(df)
+    profile = agents.profile_dataframe(semantic_df)
 
     # 2. REASON — DeepSeek returns a strict-JSON cleaning plan
     prompt = agents.build_cleaning_prompt(profile)
@@ -545,7 +572,9 @@ def run_data_cleaning_agent(req: CleaningRequest):
 
     # 3. ACT — pandas executes the plan, step by step, on a copy of the data
     fitted_steps = list(DATASET_TRANSFORMS.get(req.dataset_id, []))
-    cleaned_df, steps = agents.apply_cleaning_plan(df, plan["actions"], fitted_steps=fitted_steps)
+    cleaned_df, steps = agents.apply_cleaning_plan(
+        df, policy_actions + plan["actions"], fitted_steps=fitted_steps
+    )
 
     cleaned_id = f"{req.dataset_id}-cleaned"
     DATASETS[cleaned_id] = cleaned_df

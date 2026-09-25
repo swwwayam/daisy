@@ -148,6 +148,20 @@ body { background: #000; }
 }
 .ws .chat-log:hover::-webkit-scrollbar-thumb { background: rgba(180, 154, 255, .62); }
 .ws .chat-log::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.cleaning-review { align-items: flex-start; }
+.zero-policy-list { width: 100%; display: grid; gap: 8px; }
+.zero-policy-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 16px; border: 1px solid #2d2737; border-radius: 12px; background: #121016; }
+.zero-policy-row > span { display: grid; gap: 4px; min-width: 0; }
+.zero-policy-row strong { color: #f5f2fb; font-size: 13px; overflow-wrap: anywhere; }
+.zero-policy-row small { color: #817a89; font-size: 11px; }
+.zero-policy-row select { min-width: 170px; padding: 10px 34px 10px 12px; border: 1px solid #3c3449; border-radius: 9px; background: #1a1620; color: #ddd7e7; font: inherit; font-size: 12px; }
+.zero-policy-row select:focus { outline: 2px solid rgba(128,82,255,.45); outline-offset: 2px; }
+.policy-footnote, .quality-note { color: #817a89; font-size: 12px; line-height: 1.55; }
+
+@media (max-width: 620px) {
+  .zero-policy-row { align-items: stretch; flex-direction: column; }
+  .zero-policy-row select { width: 100%; }
+}
 
 @media (max-width: 1100px) and (min-width: 900px) {
   .hero-type h1 { font-size: 7.1vw; }

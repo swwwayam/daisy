@@ -176,11 +176,38 @@ function DatasetPanel({ run, focusSelf }: { run: Run; focusSelf: () => void }) {
 /* ─── Cleaning stage ─── */
 function CleaningPanel({ run }: { run: Run }) {
   const { state } = run;
+  const [zeroPolicies, setZeroPolicies] = useState<Record<string, "keep" | "missing">>({});
+  useEffect(() => setZeroPolicies({}), [state.upload?.dataset_id]);
   const st = state.status.cleaning;
   if (st === "idle") return <Empty>Upload a dataset to unlock cleaning.</Empty>;
-  if (st === "available") return <ReadyState title="Data Cleaning agent" desc="Detects nulls, duplicates, and skew, then repairs them — and tells you exactly what it changed." action="Run cleaning" onRun={run.runCleaning} />;
+  if (st === "available") {
+    const zeroColumns = Object.entries(state.upload?.zero_values ?? {}).filter(([, count]) => count > 0);
+    const markedMissing = zeroColumns.filter(([column]) => zeroPolicies[column] === "missing").map(([column]) => column);
+    return (
+      <div className="panel-body cleaning-review">
+        <div className="panel-eyebrow">Review data meaning</div>
+        <h3 className="panel-title">Tell DAISY what zero means</h3>
+        <p className="lead">Zero is kept as a real value by default. Change only columns where the source system used zero to mean “unknown” or “not recorded.”</p>
+        {zeroColumns.length ? (
+          <div className="zero-policy-list">
+            {zeroColumns.map(([column, count]) => (
+              <label className="zero-policy-row" key={column}>
+                <span><strong>{column}</strong><small>{count.toLocaleString()} zero value{count === 1 ? "" : "s"}</small></span>
+                <select value={zeroPolicies[column] ?? "keep"} onChange={(event) => setZeroPolicies((current) => ({ ...current, [column]: event.target.value as "keep" | "missing" }))}>
+                  <option value="keep">Keep as real zero</option>
+                  <option value="missing">Zero means missing</option>
+                </select>
+              </label>
+            ))}
+          </div>
+        ) : <div className="quality-note">No numeric columns contain zero values.</div>}
+        <div className="policy-footnote">DAISY never guesses this setting. Your choices are saved with the trained model and reused for future predictions.</div>
+        <button className="pill pill-solid" onClick={() => run.runCleaning(markedMissing)}>Run cleaning</button>
+      </div>
+    );
+  }
   if (st === "running") return <Loader message="DAISY is cleaning your dataset…" />;
-  if (st === "error") return <ErrorBox message={state.errors.cleaning || "Cleaning failed"} onRetry={run.runCleaning} />;
+  if (st === "error") return <ErrorBox message={state.errors.cleaning || "Cleaning failed"} onRetry={() => run.runCleaning()} />;
   const c = state.cleaning;
   if (!c) return null;
   return (
@@ -589,7 +616,7 @@ function ControlPanel({ run, goto }: { run: Run; goto: (id: StageId) => void }) 
   let node: React.ReactNode = null;
 
   if (s.dataset !== "done") node = <ControlHint label="Start here" text="Upload a CSV to begin the run." onClick={() => goto("dataset")} cta="Go to upload" />;
-  else if (s.cleaning === "available") node = <ControlHint label="Next" text="Clean the raw dataset." onClick={run.runCleaning} cta="Run cleaning" solid />;
+  else if (s.cleaning === "available") node = <ControlHint label="Your input" text="Review how zero values should be interpreted." onClick={() => goto("cleaning")} cta="Review cleaning" solid />;
   else if (s.eda === "available") node = <ControlHint label="Next" text="Explore the cleaned data." onClick={run.runEda} cta="Run EDA" solid />;
   else if (s.feature === "available") node = <ControlHint label="Next" text="Engineer features." onClick={run.runFeature} cta="Run feature engineering" solid />;
   else if (s.target === "available" && !state.targetColumn) node = <ControlHint label="Your input" text="Choose the column to predict." onClick={() => goto("target")} cta="Select target" solid />;

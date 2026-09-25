@@ -182,11 +182,11 @@ export function useDaisyRun() {
     [run]
   );
 
-  const runCleaning = useCallback(() => {
+  const runCleaning = useCallback((zeroAsMissing: string[] = []) => {
     if (!s.currentDatasetId) return;
     return run(
       "cleaning",
-      () => daisy.dataCleaning(s.currentDatasetId as string),
+      () => daisy.dataCleaning(s.currentDatasetId as string, zeroAsMissing),
       (r) =>
         setS((prev) => ({
           ...prev,
