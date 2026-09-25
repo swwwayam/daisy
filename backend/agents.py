@@ -58,12 +58,21 @@ def profile_dataframe(df: pd.DataFrame) -> dict:
 
         if pd.api.types.is_numeric_dtype(series):
             desc = series.describe()
+            non_null = series.dropna()
+            zero_count = int(series.eq(0).sum())
+            integer_like = bool(
+                not non_null.empty
+                and ((non_null.astype(float) % 1) == 0).all()
+            )
             info.update(
                 {
                     "min": _json_safe(desc.get("min")),
                     "max": _json_safe(desc.get("max")),
                     "mean": _json_safe(round(desc.get("mean"), 4)) if pd.notna(desc.get("mean")) else None,
                     "std": _json_safe(round(desc.get("std"), 4)) if pd.notna(desc.get("std")) else None,
+                    "zero_count": zero_count,
+                    "zero_pct": round((zero_count / n_rows) * 100, 2),
+                    "integer_like": integer_like,
                 }
             )
         else:
@@ -109,6 +118,8 @@ Respond with STRICT JSON ONLY — no markdown, no code fences, no commentary. Ma
 Rules:
 - Only use drop_column if a column is over 90% null, or is an obvious raw ID/index with no predictive value.
 - Only use handle_outliers on numeric columns where min/max/mean/std clearly show extreme values.
+- A numeric zero is an observed value, NOT a missing value. Never recommend replacing zero with a mean, median, or mode. Counts such as zero balconies, bathrooms, parking spaces, amenities, property age, or a ground-floor value can be valid domain values.
+- Only recommend impute when null_count is greater than zero. For integer_like count or ordinal columns, prefer mode or median; never use mean when it would create impossible fractional counts.
 - Use exact column names as they appear in the profile — never invent columns.
 - Keep actions under 12 items. If the data already looks clean, return an empty actions array.
 - Every action must include a non-empty reasoning string.
@@ -188,13 +199,19 @@ def _apply_handle_outliers(df, column, strategy, **_):
     q1, q3 = df[column].quantile(0.25), df[column].quantile(0.75)
     iqr = q3 - q1
     lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+    # Zero is data unless the user explicitly declares it a missing-value
+    # sentinel. IQR alone is not enough evidence to rewrite or remove it.
+    zero_mask = df[column].eq(0)
+    zero_count = int(zero_mask.sum())
     if strategy == "iqr_clip":
-        df[column] = df[column].clip(lower=lower, upper=upper)
-        return f"Clipped outliers in '{column}' to [{round(lower, 2)}, {round(upper, 2)}]"
+        clipped = df[column].clip(lower=lower, upper=upper)
+        df[column] = clipped.mask(zero_mask, 0)
+        return f"Clipped outliers in '{column}' to [{round(lower, 2)}, {round(upper, 2)}]; preserved {zero_count} observed zero(s)"
     elif strategy == "iqr_remove":
         before = len(df)
-        df.drop(df[(df[column] < lower) | (df[column] > upper)].index, inplace=True)
-        return f"Removed {before - len(df)} outlier row(s) based on '{column}'"
+        outlier_mask = ((df[column] < lower) | (df[column] > upper)) & ~zero_mask
+        df.drop(df[outlier_mask].index, inplace=True)
+        return f"Removed {before - len(df)} outlier row(s) based on '{column}'; preserved {zero_count} observed zero(s)"
     raise ValueError(f"Unknown outlier strategy '{strategy}'")
 
 
@@ -236,15 +253,41 @@ def apply_cleaning_plan(df: pd.DataFrame, actions: list[dict], fitted_steps: lis
     df = df.copy()
     steps = []
     for action in actions:
+        action = dict(action)
         action_type = action.get("type")
         handler = ACTION_HANDLERS.get(action_type)
-        step = {"type": action_type, "column": action.get("column"), "reasoning": action.get("reasoning")}
+        step = {"type": action_type, "column": action.get("column"), "strategy": action.get("strategy"), "reasoning": action.get("reasoning")}
         if handler is None:
             step["status"] = "skipped"
             step["message"] = f"Unknown action type '{action_type}'"
         else:
             before = df.copy()
             try:
+                if action_type == "impute" and action.get("column") in df.columns:
+                    series = df[action["column"]]
+                    missing_count = int(series.isna().sum())
+                    if missing_count == 0:
+                        step["status"] = "skipped"
+                        step["message"] = (
+                            f"Skipped imputation for '{action['column']}': no missing values; "
+                            f"preserved {int(series.eq(0).sum())} observed zero(s)"
+                        )
+                        steps.append(step)
+                        continue
+
+                    non_null = series.dropna()
+                    integer_like = bool(
+                        pd.api.types.is_numeric_dtype(series)
+                        and not non_null.empty
+                        and ((non_null.astype(float) % 1) == 0).all()
+                    )
+                    if action.get("strategy") == "mean" and integer_like:
+                        requested = action["strategy"]
+                        action["strategy"] = "mode" if non_null.nunique() <= 32 else "median"
+                        step["requested_strategy"] = requested
+                        step["strategy"] = action["strategy"]
+                        step["guardrail_adjustment"] = "Avoided fractional mean imputation for an integer-like column"
+
                 if fitted_steps is not None:
                     from model_export import capture_operation
                     fitted = capture_operation(df, action)

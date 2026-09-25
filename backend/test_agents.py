@@ -44,6 +44,8 @@ class TestProfileDataframe:
         assert age_info["null_count"] == 1
         assert age_info["min"] == 25.0
         assert age_info["max"] == 40.0
+        assert age_info["zero_count"] == 0
+        assert age_info["integer_like"] is True
 
     def test_categorical_column_top_values(self, messy_df):
         profile = profile_dataframe(messy_df)
@@ -77,11 +79,46 @@ class TestApplyCleaningPlan:
         assert len(result_df) == 2
         assert steps[0]["status"] == "success"
 
-    def test_impute_mean(self, messy_df):
+    def test_integer_like_mean_imputation_is_guarded(self, messy_df):
         actions = [{"type": "impute", "column": "age", "strategy": "mean", "reasoning": "t"}]
         result_df, steps = apply_cleaning_plan(messy_df, actions)
         assert steps[0]["status"] == "success"
+        assert steps[0]["requested_strategy"] == "mean"
+        assert steps[0]["strategy"] == "mode"
+        assert result_df.loc[1, "age"] == 25
         assert result_df["age"].isna().sum() == 0
+
+    def test_continuous_mean_imputation_remains_available(self):
+        df = pd.DataFrame({"ratio": [1.5, np.nan, 2.5]})
+        result_df, steps = apply_cleaning_plan(
+            df, [{"type": "impute", "column": "ratio", "strategy": "mean", "reasoning": "t"}]
+        )
+        assert steps[0]["strategy"] == "mean"
+        assert result_df.loc[1, "ratio"] == 2.0
+
+    def test_imputation_never_replaces_observed_zeros(self):
+        df = pd.DataFrame({"Balconies": [0, 1, 2, np.nan]})
+        result_df, _ = apply_cleaning_plan(
+            df, [{"type": "impute", "column": "Balconies", "strategy": "mean", "reasoning": "t"}]
+        )
+        assert result_df.loc[0, "Balconies"] == 0
+
+    def test_noop_imputation_is_skipped_and_zeros_are_preserved(self):
+        df = pd.DataFrame({"Balconies": [0, 1, 2]})
+        result_df, steps = apply_cleaning_plan(
+            df, [{"type": "impute", "column": "Balconies", "strategy": "mean", "reasoning": "t"}]
+        )
+        assert steps[0]["status"] == "skipped"
+        assert result_df["Balconies"].tolist() == [0, 1, 2]
+
+    def test_outlier_clipping_preserves_valid_zero(self):
+        df = pd.DataFrame({"Bathrooms": [0, 2, 2, 2, 3, 3, 3, 100]})
+        result_df, steps = apply_cleaning_plan(
+            df, [{"type": "handle_outliers", "column": "Bathrooms", "strategy": "iqr_clip", "reasoning": "t"}]
+        )
+        assert steps[0]["status"] == "success"
+        assert result_df.loc[0, "Bathrooms"] == 0
+        assert result_df["Bathrooms"].max() < 100
 
     def test_impute_constant(self, messy_df):
         actions = [
