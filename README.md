@@ -475,6 +475,3 @@ D.A.I.S.Y. is developed as a collaborative academic project.
 
 ------------------------------------------------------------------------
 
-## 📄 License
-
-Add the project's intended license here when one has been selected.
