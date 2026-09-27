@@ -434,7 +434,7 @@ Potential future improvements include:
 -   Model explainability
 -   Pipeline comparison and experiment tracking
 -   Persistent user/project history
--   Production deployment
+-   Production deployment 
 -   More sophisticated agent orchestration and recovery
 
 ------------------------------------------------------------------------
@@ -471,7 +471,7 @@ D.A.I.S.Y. v03 introduces improvements across the platform:
 
 ## 👥 Contributors
 
-D.A.I.S.Y. is developed as a collaborative academic project.
+D.A.I.S.Y. is developed as a collaborative academic project
 
 ------------------------------------------------------------------------
 
