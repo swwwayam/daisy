@@ -310,6 +310,13 @@ running and `GET /health/ready` reports whether Supabase authentication,
 Groq inference, and the upload limit are configured. The readiness endpoint
 returns HTTP 503 until all required settings are present.
 
+You can check both probes from PowerShell after starting the backend:
+
+``` powershell
+Invoke-RestMethod http://localhost:8000/health/live
+Invoke-RestMethod http://localhost:8000/health/ready
+```
+
 ### 5. Start the frontend
 
 Open another terminal in the project root:
