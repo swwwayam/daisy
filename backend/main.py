@@ -74,6 +74,26 @@ app = FastAPI(title="D.A.I.S.Y ML Backend", version="0.3.0")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "50")) * 1024 * 1024
+DEFAULT_CORS_ORIGINS = (
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:8443",
+    "http://127.0.0.1:8443",
+)
+
+
+def parse_cors_origins(raw_origins: str | None) -> list[str]:
+    """Return normalized, unique origins from a comma-separated setting."""
+    configured = raw_origins.split(",") if raw_origins is not None else DEFAULT_CORS_ORIGINS
+    origins: list[str] = []
+    for origin in configured:
+        normalized = origin.strip().rstrip("/")
+        if normalized and normalized not in origins:
+            origins.append(normalized)
+    return origins
+
+
+CORS_ORIGINS = parse_cors_origins(os.getenv("CORS_ORIGINS"))
 
 
 async def validate_access_token(token: str) -> dict:
@@ -111,18 +131,13 @@ async def require_authenticated_session(request: Request, call_next):
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
     return await call_next(request)
 
-# Allow the React frontend (localhost:3000) to call this API directly.
+# Browser origins are explicit so production deployments do not silently trust
+# development machines or private-network addresses.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "http://localhost:8443",
-    "http://192.168.56.1:8443",
-    "http://192.168.0.188:8443"
-],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=CORS_ORIGINS,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 
 # In-memory dataset store. Fine for a single-user demo / final year project.
