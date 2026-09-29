@@ -305,6 +305,11 @@ The API will be available at:
 http://localhost:8000
 ```
 
+For deployment probes, `GET /health/live` confirms that the API process is
+running and `GET /health/ready` reports whether Supabase authentication,
+Groq inference, and the upload limit are configured. The readiness endpoint
+returns HTTP 503 until all required settings are present.
+
 ### 5. Start the frontend
 
 Open another terminal in the project root:
@@ -329,6 +334,8 @@ The FastAPI backend currently exposes endpoints for:
   Endpoint                               Purpose
   -------------------------------------- -------------------------------
   `GET /`                                Backend health/root response
+  `GET /health/live`                     Liveness probe for the API process
+  `GET /health/ready`                    Readiness probe for required services
   `POST /upload-dataset`                 Upload a dataset
   `GET /dataset/{dataset_id}/summary`    Retrieve dataset summary
   `POST /chat`                           Chat with D.A.I.S.Y.
@@ -339,6 +346,9 @@ The FastAPI backend currently exposes endpoints for:
   `POST /agents/model-training`          Train and compare models
   `POST /agents/evaluation`              Evaluate a selected model
   `GET /dataset/{dataset_id}/download`   Download a processed dataset
+
+Browser origins are controlled by the comma-separated `CORS_ORIGINS` setting
+in `backend/.env`; keep it limited to the deployed frontend URL(s).
 
 ------------------------------------------------------------------------
 
