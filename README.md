@@ -128,6 +128,18 @@ For agent stages that require AI planning:
 This separation keeps AI reasoning distinct from deterministic data
 processing.
 
+
+------------------------------------------------------------------------
+## 🔄 How a D.A.I.S.Y. Run Works
+
+Each pipeline stage follows a controlled execution pattern:
+
+1. **Sense** — deterministic Python code profiles the dataset and collects facts.
+2. **Reason** — the AI model interprets those facts and produces a structured plan.
+3. **Act** — DAISY validates the plan and executes the approved operations.
+4. **Record** — the result is returned to the frontend with the actions and metrics that were actually performed.
+
+This design prevents the language model from directly modifying datasets or inventing model results.
 ------------------------------------------------------------------------
 
 ## 🤖 AI Integration
