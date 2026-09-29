@@ -373,10 +373,16 @@ def health_check():
     return {"status": "Backend running", "datasets_in_memory": len(DATASETS)}
 
 
+HEALTH_CACHE_HEADERS = {"Cache-Control": "no-store"}
+
+
 @app.get("/health/live")
 def liveness_check():
     """Confirm that the API process is running."""
-    return {"status": "ok", "service": "daisy-api", "version": app.version}
+    return JSONResponse(
+        content={"status": "ok", "service": "daisy-api", "version": app.version},
+        headers=HEALTH_CACHE_HEADERS,
+    )
 
 
 def readiness_checks() -> dict[str, bool]:
@@ -397,6 +403,7 @@ def readiness_check():
     return JSONResponse(
         status_code=200 if ready else 503,
         content={"status": "ready" if ready else "not_ready", "checks": checks},
+        headers=HEALTH_CACHE_HEADERS,
     )
 
 

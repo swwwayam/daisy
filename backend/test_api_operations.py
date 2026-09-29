@@ -52,6 +52,7 @@ class HealthEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["service"], "daisy-api")
+        self.assertEqual(response.headers["cache-control"], "no-store")
 
     def test_readiness_reports_only_configuration_state(self):
         with (
@@ -66,6 +67,7 @@ class HealthEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ready")
+        self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(response.json()["checks"], {
             "supabase_auth": True,
             "groq_inference": True,
