@@ -385,6 +385,7 @@ def readiness_checks() -> dict[str, bool]:
         "supabase_auth": bool(SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY),
         "groq_inference": bool(GROQ_API_KEY),
         "upload_limit": MAX_UPLOAD_BYTES > 0,
+        "allowed_browser_origins": bool(CORS_ORIGINS),
     }
 
 

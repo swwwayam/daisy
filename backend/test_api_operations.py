@@ -59,6 +59,7 @@ class HealthEndpointTests(unittest.TestCase):
             patch.object(main, "SUPABASE_PUBLISHABLE_KEY", "configured"),
             patch.object(main, "GROQ_API_KEY", "configured"),
             patch.object(main, "MAX_UPLOAD_BYTES", 50 * 1024 * 1024),
+            patch.object(main, "CORS_ORIGINS", ["https://app.daisy.example"]),
             TestClient(main.app) as client,
         ):
             response = client.get("/health/ready")
@@ -69,6 +70,7 @@ class HealthEndpointTests(unittest.TestCase):
             "supabase_auth": True,
             "groq_inference": True,
             "upload_limit": True,
+            "allowed_browser_origins": True,
         })
 
     def test_readiness_returns_503_when_a_dependency_is_unconfigured(self):
@@ -77,6 +79,7 @@ class HealthEndpointTests(unittest.TestCase):
             patch.object(main, "SUPABASE_PUBLISHABLE_KEY", "configured"),
             patch.object(main, "GROQ_API_KEY", "configured"),
             patch.object(main, "MAX_UPLOAD_BYTES", 50 * 1024 * 1024),
+            patch.object(main, "CORS_ORIGINS", ["https://app.daisy.example"]),
             TestClient(main.app) as client,
         ):
             response = client.get("/health/ready")
@@ -84,6 +87,20 @@ class HealthEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["status"], "not_ready")
         self.assertFalse(response.json()["checks"]["supabase_auth"])
+
+    def test_readiness_returns_503_without_an_allowed_browser_origin(self):
+        with (
+            patch.object(main, "SUPABASE_URL", "https://example.supabase.co"),
+            patch.object(main, "SUPABASE_PUBLISHABLE_KEY", "configured"),
+            patch.object(main, "GROQ_API_KEY", "configured"),
+            patch.object(main, "MAX_UPLOAD_BYTES", 50 * 1024 * 1024),
+            patch.object(main, "CORS_ORIGINS", []),
+            TestClient(main.app) as client,
+        ):
+            response = client.get("/health/ready")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertFalse(response.json()["checks"]["allowed_browser_origins"])
 
 
 if __name__ == "__main__":
