@@ -67,6 +67,8 @@ class HealthEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ready")
+        self.assertEqual(response.json()["service"], "daisy-api")
+        self.assertEqual(response.json()["version"], main.app.version)
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(response.json()["checks"], {
             "supabase_auth": True,
@@ -88,6 +90,7 @@ class HealthEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["status"], "not_ready")
+        self.assertEqual(response.json()["service"], "daisy-api")
         self.assertFalse(response.json()["checks"]["supabase_auth"])
 
     def test_readiness_returns_503_without_an_allowed_browser_origin(self):

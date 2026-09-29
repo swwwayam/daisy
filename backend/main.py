@@ -402,7 +402,12 @@ def readiness_check():
     ready = all(checks.values())
     return JSONResponse(
         status_code=200 if ready else 503,
-        content={"status": "ready" if ready else "not_ready", "checks": checks},
+        content={
+            "status": "ready" if ready else "not_ready",
+            "service": "daisy-api",
+            "version": app.version,
+            "checks": checks,
+        },
         headers=HEALTH_CACHE_HEADERS,
     )
 
