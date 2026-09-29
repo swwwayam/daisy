@@ -74,6 +74,8 @@ app = FastAPI(title="D.A.I.S.Y ML Backend", version="0.3.0")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "50")) * 1024 * 1024
 DEFAULT_CORS_ORIGINS = (
     "http://localhost:3000",
@@ -97,6 +99,7 @@ def parse_cors_origins(raw_origins: str | None) -> list[str]:
 CORS_ORIGINS = parse_cors_origins(os.getenv("CORS_ORIGINS"))
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 request_logger = logging.getLogger("daisy.requests")
+PUBLIC_PATHS = frozenset({"/", "/docs", "/openapi.json", "/redoc", "/health/live", "/health/ready"})
 
 
 def normalize_request_id(candidate: str | None) -> str:
@@ -131,8 +134,7 @@ async def require_authenticated_session(request: Request, call_next):
     request_id = normalize_request_id(request.headers.get("x-request-id"))
     request.state.request_id = request_id
     started = perf_counter()
-    public_paths = {"/", "/docs", "/openapi.json", "/redoc"}
-    if request.method == "OPTIONS" or request.url.path in public_paths:
+    if request.method == "OPTIONS" or request.url.path in PUBLIC_PATHS:
         response = await call_next(request)
     else:
         authorization = request.headers.get("authorization", "")
@@ -308,8 +310,6 @@ def build_chat_pipeline_context(dataset_id: str) -> str:
 
     return "\n".join(sections)
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 ai_logger = logging.getLogger("uvicorn.error")
 ai_client = (
     OpenAI(
@@ -371,6 +371,32 @@ def generate_ai_text(
 @app.get("/")
 def health_check():
     return {"status": "Backend running", "datasets_in_memory": len(DATASETS)}
+
+
+@app.get("/health/live")
+def liveness_check():
+    """Confirm that the API process is running."""
+    return {"status": "ok", "service": "daisy-api", "version": app.version}
+
+
+def readiness_checks() -> dict[str, bool]:
+    """Report whether the external services required by DAISY are configured."""
+    return {
+        "supabase_auth": bool(SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY),
+        "groq_inference": bool(GROQ_API_KEY),
+        "upload_limit": MAX_UPLOAD_BYTES > 0,
+    }
+
+
+@app.get("/health/ready")
+def readiness_check():
+    """Tell an orchestrator whether this instance can accept application traffic."""
+    checks = readiness_checks()
+    ready = all(checks.values())
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content={"status": "ready" if ready else "not_ready", "checks": checks},
+    )
 
 
 @app.post("/upload-dataset")
