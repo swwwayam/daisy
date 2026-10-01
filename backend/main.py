@@ -215,6 +215,20 @@ def create_derived_dataset(parent_id: str, owner_id: str, df: pd.DataFrame, step
     return dataset_id
 
 
+def owned_source_dataset(dataset_id: str, owner_id: str) -> str:
+    """Authorize every ancestor before using original rows or pipeline history."""
+    current = dataset_id
+    seen = set()
+    while True:
+        require_owned_dataset(current, owner_id)
+        if current in seen:
+            raise HTTPException(status_code=409, detail="Dataset lineage is invalid. Upload it again.")
+        seen.add(current)
+        if current not in DATASET_PARENTS:
+            return current
+        current = DATASET_PARENTS[current]
+
+
 def save_pipeline_result(dataset_id: str, stage: str, result: dict, child_dataset_id: str | None = None):
     """Save an agent result against the current dataset and optionally its child."""
     PIPELINE_CONTEXT.setdefault(dataset_id, {})[stage] = result
@@ -996,25 +1010,20 @@ class ModelTrainingRequest(BaseModel):
 
 
 @app.post("/agents/model-training")
-def run_model_training_agent(req: ModelTrainingRequest):
+def run_model_training_agent(req: ModelTrainingRequest, request: Request):
     """NO LLM call in this agent — see model_training.py's module
     docstring for why. Real sklearn .fit()/.predict() for every requested
     candidate; the winner is picked by an objective metric comparison,
     not an LLM judgment call."""
-    if req.dataset_id not in DATASETS:
-        raise HTTPException(status_code=404, detail="Dataset not found. Upload it again.")
+    owner_id = authenticated_user_id(request)
+    df = require_owned_dataset(req.dataset_id, owner_id)
+    source_id = owned_source_dataset(req.dataset_id, owner_id)
 
     workflow_id = req.workflow_id or new_workflow_id()
-    df = DATASETS[req.dataset_id]
     if req.dataset_id in DATASET_PARENTS and req.dataset_id not in DATASET_TRANSFORMS:
         raise HTTPException(status_code=409, detail="This dataset predates saved preprocessing. Upload it again and rerun the pipeline to create a portable model.")
     fitted_models = {}
     fitted_preprocessing = []
-    source_id = req.dataset_id
-    visited = set()
-    while source_id in DATASET_PARENTS and source_id not in visited:
-        visited.add(source_id)
-        source_id = DATASET_PARENTS[source_id]
 
     with Timer() as timer:
         try:
@@ -1116,7 +1125,7 @@ class EvaluationRequest(BaseModel):
 
 
 @app.post("/agents/evaluation")
-def run_evaluation_agent(req: EvaluationRequest):
+def run_evaluation_agent(req: EvaluationRequest, request: Request):
     """Re-trains ONLY the requested model (same split as Model Training,
     given the same test_size/random_state) to get real predictions for
     real diagnostics — a confusion matrix or residual analysis, and a
@@ -1124,8 +1133,9 @@ def run_evaluation_agent(req: EvaluationRequest):
     metrics alone can give you. DeepSeek interprets the real numbers into
     a plain-language verdict; a guardrail validates that verdict against
     a fixed set of allowed values, same philosophy as every other agent."""
-    if req.dataset_id not in DATASETS:
-        raise HTTPException(status_code=404, detail="Dataset not found. Upload it again.")
+    owner_id = authenticated_user_id(request)
+    df = require_owned_dataset(req.dataset_id, owner_id)
+    source_id = owned_source_dataset(req.dataset_id, owner_id)
     if ai_client is None:
         raise HTTPException(
             status_code=503,
@@ -1133,12 +1143,6 @@ def run_evaluation_agent(req: EvaluationRequest):
         )
 
     workflow_id = req.workflow_id or new_workflow_id()
-    df = DATASETS[req.dataset_id]
-    source_id = req.dataset_id
-    visited = set()
-    while source_id in DATASET_PARENTS and source_id not in visited:
-        visited.add(source_id)
-        source_id = DATASET_PARENTS[source_id]
 
     with Timer() as timer:
         try:

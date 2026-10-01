@@ -119,3 +119,42 @@ class TenantIsolationTests(unittest.TestCase):
             self.assertTrue(main.DATASET_OWNERS.permits(child, "user-a"))
             self.assertEqual(main.DATASET_PARENTS[child], dataset_id)
             self.assertEqual(self.client.get(f"/dataset/{child}/summary", headers=self.user_b).status_code, 404)
+
+    def training_requests(self, dataset_id, headers):
+        for endpoint, fields in (
+            ("model-training", {"candidate_models": ["LogisticRegression"]}),
+            ("evaluation", {"model_name": "LogisticRegression"}),
+        ):
+            yield self.client.post(
+                f"/agents/{endpoint}", headers=headers,
+                json={"dataset_id": dataset_id, "target_column": "target", **fields},
+            )
+
+    def test_foreign_dataset_cannot_be_trained_or_evaluated(self):
+        dataset_id = self.upload()
+        with patch.object(main.model_training, "train_and_evaluate") as train, patch.object(
+            main.evaluation, "evaluate_model"
+        ) as evaluate:
+            for response in self.training_requests(dataset_id, self.user_b):
+                self.assertEqual(response.status_code, 404)
+            train.assert_not_called()
+            evaluate.assert_not_called()
+
+    def test_lineage_cannot_cross_an_owner_boundary_or_use_a_missing_parent(self):
+        parent = self.upload(self.user_b)
+        child = self.upload()
+        with patch.object(main.model_training, "train_and_evaluate") as train, patch.object(
+            main.evaluation, "evaluate_model"
+        ) as evaluate:
+            for invalid_parent in (parent, "missing"):
+                main.DATASET_PARENTS[child] = invalid_parent
+                for response in self.training_requests(child, self.user_a):
+                    self.assertEqual(response.status_code, 404)
+            train.assert_not_called()
+            evaluate.assert_not_called()
+
+    def test_cyclic_lineage_fails_before_training(self):
+        dataset_id = self.upload()
+        main.DATASET_PARENTS[dataset_id] = dataset_id
+        for response in self.training_requests(dataset_id, self.user_a):
+            self.assertEqual(response.status_code, 409)
