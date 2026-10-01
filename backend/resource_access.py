@@ -24,3 +24,7 @@ class ResourceOwners:
         with self._lock:
             return bool(owner_id) and self._owners.get(resource_id) == owner_id
 
+    def owner(self, resource_id: str) -> str | None:
+        with self._lock:
+            return self._owners.get(resource_id)
+

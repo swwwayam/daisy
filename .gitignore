@@ -18,6 +18,7 @@ logs/
 backend/venv/
 backend/.venv/
 backend/artifacts/
+backend/state/
 backend/__pycache__/
 backend/*.pyc
 *.pyc

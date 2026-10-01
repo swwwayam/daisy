@@ -36,6 +36,7 @@ Test:
 """
 
 import io
+import json
 import logging
 import os
 import re
@@ -67,11 +68,18 @@ import model_selection
 import model_training
 import model_export
 from resource_access import ResourceOwners
+from persistence import build_store, PersistenceError
 from agent_schema import Timer, build_agent_record, new_workflow_id
 
 load_dotenv()
+resource_store = build_store()
 
 app = FastAPI(title="D.A.I.S.Y ML Backend", version="0.3.0")
+
+
+@app.exception_handler(PersistenceError)
+async def persistence_unavailable(request: Request, exc: PersistenceError):
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
@@ -166,7 +174,7 @@ async def require_authenticated_session(request: Request, call_next):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
     expose_headers=["X-Request-ID"],
 )
@@ -189,6 +197,18 @@ def authenticated_user_id(request: Request) -> str:
 def require_owned_dataset(dataset_id: str, owner_id: str) -> pd.DataFrame:
     # Missing and foreign resources return the same response to avoid revealing
     # another customer's dataset existence.
+    if dataset_id not in DATASETS:
+        saved = resource_store.get(dataset_id, owner_id, "dataset")
+        if saved:
+            restored = pd.read_json(io.StringIO(saved["blob"].decode()), orient="table")
+            DATASET_OWNERS.register(dataset_id, owner_id)
+            DATASETS[dataset_id] = restored
+            metadata = saved["metadata"]
+            DATASET_TRANSFORMS[dataset_id] = metadata.get("steps", [])
+            PIPELINE_CONTEXT[dataset_id] = metadata.get("context", {})
+            DATASET_DETAILS[dataset_id] = metadata.get("details", {})
+            if metadata.get("parent"):
+                DATASET_PARENTS[dataset_id] = metadata["parent"]
     if not DATASET_OWNERS.permits(dataset_id, owner_id) or dataset_id not in DATASETS:
         raise HTTPException(status_code=404, detail="Dataset not found.")
     return DATASETS[dataset_id]
@@ -201,6 +221,20 @@ PIPELINE_CONTEXT: dict[str, dict] = {}
 # see earlier agent results even when the frontend is using a derived dataset id.
 DATASET_PARENTS: dict[str, str] = {}
 DATASET_TRANSFORMS: dict[str, list] = {}
+DATASET_DETAILS: dict[str, dict] = {}
+
+
+def persist_dataset(dataset_id: str):
+    if not resource_store.enabled:
+        return
+    # Training refits action descriptions, so no stored pickle is needed.
+    steps = [{key: step[key] for key in ("type", "column", "strategy", "column_b", "value", "fill") if key in step}
+             for step in DATASET_TRANSFORMS.get(dataset_id, [])]
+    metadata = {"parent": DATASET_PARENTS.get(dataset_id), "steps": steps,
+                "context": PIPELINE_CONTEXT.get(dataset_id, {}), "details": DATASET_DETAILS.get(dataset_id, {})}
+    metadata = json.loads(json.dumps(metadata, default=lambda value: value.item() if hasattr(value, "item") else str(value)))
+    resource_store.save(dataset_id, DATASET_OWNERS.owner(dataset_id), "dataset", metadata,
+                        DATASETS[dataset_id].to_json(orient="table", date_format="iso", double_precision=15).encode())
 
 
 def create_derived_dataset(parent_id: str, owner_id: str, df: pd.DataFrame, steps: list) -> str:
@@ -211,6 +245,8 @@ def create_derived_dataset(parent_id: str, owner_id: str, df: pd.DataFrame, step
     DATASETS[dataset_id] = df
     DATASET_PARENTS[dataset_id] = parent_id
     DATASET_TRANSFORMS[dataset_id] = steps
+    DATASET_DETAILS[dataset_id] = dict(DATASET_DETAILS.get(parent_id, {}))
+    persist_dataset(dataset_id)
     return dataset_id
 
 
@@ -238,6 +274,8 @@ def save_pipeline_result(dataset_id: str, stage: str, result: dict, child_datase
         # pipeline story without duplicating mutable result objects.
         PIPELINE_CONTEXT[child_dataset_id] = dict(PIPELINE_CONTEXT.get(dataset_id, {}))
         PIPELINE_CONTEXT[child_dataset_id][stage] = result
+        persist_dataset(child_dataset_id)
+    persist_dataset(dataset_id)
 
 
 def get_pipeline_context(dataset_id: str) -> dict:
@@ -523,6 +561,8 @@ async def upload_dataset(request: Request, file: UploadFile = File(...)):
     DATASET_OWNERS.register(dataset_id, owner_id)
     DATASETS[dataset_id] = df
     DATASET_TRANSFORMS[dataset_id] = [{"type": "normalize"}]
+    DATASET_DETAILS[dataset_id] = {"filename": file.filename}
+    persist_dataset(dataset_id)
 
     schema_report = build_schema_report(df)
     schema_report["dataset_id"] = dataset_id
@@ -570,6 +610,45 @@ def get_dataset_summary(dataset_id: str, request: Request):
 class ChatRequest(BaseModel):
     message: str
     dataset_id: str | None = None  # optional — lets the chat ground itself in real data
+
+
+class RunSnapshotRequest(BaseModel):
+    state: dict
+
+
+@app.get("/runs")
+def list_saved_runs(request: Request):
+    return {"runs": resource_store.list(authenticated_user_id(request), "run"), "durable": resource_store.enabled}
+
+
+@app.put("/runs/{run_id}")
+def save_run_snapshot(run_id: str, req: RunSnapshotRequest, request: Request):
+    owner = authenticated_user_id(request)
+    try:
+        uuid.UUID(run_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid run ID")
+    if req.state.get("workflowId") != run_id:
+        raise HTTPException(status_code=400, detail="Run identity does not match")
+    if len(json.dumps(req.state)) > 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Run snapshot exceeds 1 MB")
+    for key in ("originalDatasetId", "currentDatasetId"):
+        if not req.state.get(key):
+            raise HTTPException(status_code=400, detail="Run requires dataset IDs")
+        owned_source_dataset(req.state[key], owner)
+    resource_store.save(run_id, owner, "run", req.state)
+    return {"saved": resource_store.enabled}
+
+
+@app.get("/runs/{run_id}")
+def get_saved_run(run_id: str, request: Request):
+    owner = authenticated_user_id(request)
+    saved = resource_store.get(run_id, owner, "run")
+    if not saved:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    for key in ("originalDatasetId", "currentDatasetId"):
+        owned_source_dataset(saved["metadata"][key], owner)
+    return saved["metadata"]
 
 
 @app.post("/chat")
@@ -1045,6 +1124,8 @@ def run_model_training_agent(req: ModelTrainingRequest, request: Request):
                 source_df=DATASETS[source_id],
                 owner_id=owner_id,
             )
+            resource_store.save(artifact["artifact_id"], owner_id, "artifact", artifact,
+                                model_export.artifact_path(artifact["artifact_id"]).read_bytes())
         except Exception:
             ai_logger.exception("Could not export trained model")
             export_error = "The model trained, but its portable package could not be validated or saved. Check the backend log, then retry training."
@@ -1107,8 +1188,18 @@ def run_model_training_agent(req: ModelTrainingRequest, request: Request):
 @app.get("/models/{artifact_id}/download")
 def download_trained_model(artifact_id: str, request: Request):
     owner_id = authenticated_user_id(request)
-    if not model_export.artifact_owned_by(artifact_id, owner_id):
-        raise HTTPException(status_code=404, detail="Model package not found.")
+    if not model_export.artifact_owned_by(artifact_id, owner_id) or not model_export.artifact_path(artifact_id).is_file():
+        try:
+            path = model_export.artifact_path(artifact_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Model package not found.")
+        saved = resource_store.get(artifact_id, owner_id, "artifact")
+        if not saved:
+            raise HTTPException(status_code=404, detail="Model package not found.")
+        temporary = path.with_suffix(".restore.tmp")
+        temporary.write_bytes(saved["blob"])
+        temporary.replace(path)
+        path.with_suffix(".owner.json").write_text(json.dumps({"format_version": 1, "artifact_id": path.stem, "owner_id": owner_id}), encoding="utf-8")
     try:
         path = model_export.artifact_path(artifact_id)
     except ValueError:

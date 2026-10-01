@@ -122,6 +122,19 @@ export interface EvaluationResult extends AgentResult {
 
 /* ─── Endpoints ─── */
 export const daisy = {
+  async savedRuns(): Promise<{ runs: { id: string; metadata: Dict; updated_at: string }[]; durable: boolean }> {
+    return json(await fetch(`${BASE_URL}/runs`, { headers: await authHeaders() }));
+  },
+
+  async saveRun(id: string, state: unknown): Promise<{ saved: boolean }> {
+    return json(await fetch(`${BASE_URL}/runs/${encodeURIComponent(id)}`, {
+      method: "PUT", headers: await authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ state }),
+    }));
+  },
+
+  async restoreRun(id: string): Promise<Dict> {
+    return json(await fetch(`${BASE_URL}/runs/${encodeURIComponent(id)}`, { headers: await authHeaders() }));
+  },
   baseUrl: BASE_URL,
 
   async health(): Promise<{ status: string; datasets_in_memory: number }> {

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   daisy,
   DaisyApiError,
@@ -132,7 +132,31 @@ const initialState: RunState = {
 };
 
 export function useDaisyRun() {
+  const [savedRuns, setSavedRuns] = useState<{ id: string; metadata: Dict; updated_at: string }[]>([]);
+  const [historyError, setHistoryError] = useState("");
   const [s, setS] = useState<RunState>(initialState);
+  useEffect(() => {
+    daisy.savedRuns().then(r => setSavedRuns(r.runs)).catch(e => setHistoryError(errMsg(e)));
+  }, []);
+
+  useEffect(() => {
+    if (!s.workflowId || !s.originalDatasetId || Object.values(s.status).includes("running") || s.chatBusy) return;
+    const timer = window.setTimeout(() => {
+      daisy.saveRun(s.workflowId as string, s).then(r => {
+        if (r.saved) daisy.savedRuns().then(history => setSavedRuns(history.runs)).catch(e => setHistoryError(errMsg(e)));
+      }).catch(e => setHistoryError(errMsg(e)));
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [s]);
+
+  const restore = useCallback(async (id: string) => {
+    try {
+      const state = await daisy.restoreRun(id) as unknown as RunState;
+      if (!state.status || !state.currentDatasetId) throw new Error("Saved run is incomplete");
+      setS({ ...initialState, ...state, chatBusy: false, downloadBusy: false });
+      setHistoryError("");
+    } catch (e) { setHistoryError(errMsg(e)); }
+  }, []);
 
   const patch = useCallback((p: Partial<RunState>) => setS((prev) => ({ ...prev, ...p })), []);
   const setStatus = useCallback(
@@ -173,6 +197,7 @@ export function useDaisyRun() {
           setS((prev) => ({
             ...prev,
             upload: r,
+            workflowId: crypto.randomUUID(),
             originalDatasetId: r.dataset_id ?? null,
             currentDatasetId: r.dataset_id ?? null,
             engineeredColumns: [...(r.numerical_columns ?? []), ...(r.categorical_columns ?? [])],
@@ -362,5 +387,5 @@ export function useDaisyRun() {
 
   const reset = useCallback(() => setS(initialState), []);
 
-  return { state: s, acceptedModels, upload, runCleaning, runEda, runFeature, selectTarget, runSelection, runTraining, runEvaluation, sendChat, download, reset, setStatus };
+  return { state: s, savedRuns, historyError, restore, acceptedModels, upload, runCleaning, runEda, runFeature, selectTarget, runSelection, runTraining, runEvaluation, sendChat, download, reset, setStatus };
 }
