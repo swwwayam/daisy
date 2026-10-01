@@ -66,6 +66,7 @@ import feature_engineering
 import model_selection
 import model_training
 import model_export
+from resource_access import ResourceOwners
 from agent_schema import Timer, build_agent_record, new_workflow_id
 
 load_dotenv()
@@ -174,6 +175,24 @@ app.add_middleware(
 # Swap for a real DB (Postgres, per the plan) once the feedback + history
 # phases need persistence across restarts.
 DATASETS: dict[str, pd.DataFrame] = {}
+DATASET_OWNERS = ResourceOwners()
+
+
+def authenticated_user_id(request: Request) -> str:
+    """Use only the user validated by the authentication middleware."""
+    user = getattr(request.state, "user", None)
+    owner_id = user.get("id") if isinstance(user, dict) else None
+    if not isinstance(owner_id, str) or not owner_id:
+        raise HTTPException(status_code=401, detail="Sign in to use DAISY.")
+    return owner_id
+
+
+def require_owned_dataset(dataset_id: str, owner_id: str) -> pd.DataFrame:
+    # Missing and foreign resources return the same response to avoid revealing
+    # another customer's dataset existence.
+    if not DATASET_OWNERS.permits(dataset_id, owner_id) or dataset_id not in DATASETS:
+        raise HTTPException(status_code=404, detail="Dataset not found.")
+    return DATASETS[dataset_id]
 
 # Stores the REAL outputs produced by each pipeline agent so the chatbot can
 # explain what D.A.I.S.Y. actually did instead of giving generic instructions.
