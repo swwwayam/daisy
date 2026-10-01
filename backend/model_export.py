@@ -83,9 +83,28 @@ def artifact_path(artifact_id):
     return artifact_directory() / f"{identifier}.zip"
 
 
-def export_model(estimator, df, target_column, steps, training_result, dataset_id, workflow_id, source_df=None):
+def artifact_owned_by(artifact_id: str, owner_id: str) -> bool:
+    """Read trusted server metadata, never a user-provided ZIP or joblib file."""
+    if not isinstance(owner_id, str) or not owner_id:
+        return False
+    try:
+        path = artifact_path(artifact_id)
+        manifest = json.loads(path.with_suffix(".owner.json").read_text(encoding="utf-8"))
+        return (
+            isinstance(manifest, dict)
+            and manifest.get("format_version") == 1
+            and manifest.get("artifact_id") == path.stem
+            and manifest.get("owner_id") == owner_id
+        )
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def export_model(estimator, df, target_column, steps, training_result, dataset_id, workflow_id, source_df=None, *, owner_id=None):
     from daisy_predict import transform
 
+    if owner_id is not None and (not isinstance(owner_id, str) or not owner_id):
+        raise ValueError("An authenticated artifact owner is required")
     features = training_result.get("feature_columns") or [col for col in df.columns if col != target_column]
     input_columns = (
         training_result.get("input_columns")
@@ -175,6 +194,8 @@ Keep the pinned dependency versions for reliable compatibility.
 """
     destination = artifact_path(identifier)
     temporary = destination.with_suffix(".tmp")
+    owner_path = destination.with_suffix(".owner.json")
+    owner_temporary = destination.with_suffix(".owner.tmp")
     try:
         with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("model.joblib", payload.getvalue())
@@ -183,8 +204,19 @@ Keep the pinned dependency versions for reliable compatibility.
             archive.writestr("requirements.txt", "\n".join(f"{name}=={version}" for name, version in versions.items()) + "\n")
             archive.writestr("README.md", readme)
             archive.write(Path(__file__).with_name("daisy_predict.py"), "daisy_predict.py")
+        if owner_id is not None:
+            # Ownership stays on the server, outside the downloadable package.
+            # Publish it before the ZIP so a visible package never lacks its owner.
+            owner_temporary.write_text(json.dumps({
+                "format_version": 1, "artifact_id": identifier, "owner_id": owner_id,
+            }), encoding="utf-8")
+            owner_temporary.replace(owner_path)
         temporary.replace(destination)
+    except Exception:
+        owner_path.unlink(missing_ok=True)
+        raise
     finally:
         temporary.unlink(missing_ok=True)
+        owner_temporary.unlink(missing_ok=True)
     return {"artifact_id": identifier, "filename": f"daisy-{training_result['best_model']}-{identifier}.zip",
             "model": training_result["best_model"], "input_columns": input_columns}

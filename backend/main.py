@@ -1045,6 +1045,7 @@ def run_model_training_agent(req: ModelTrainingRequest, request: Request):
                 fitted_models[result["best_model"]], df, req.target_column,
                 fitted_preprocessing, result, req.dataset_id, workflow_id,
                 source_df=DATASETS[source_id],
+                owner_id=owner_id,
             )
         except Exception:
             ai_logger.exception("Could not export trained model")
@@ -1106,13 +1107,16 @@ def run_model_training_agent(req: ModelTrainingRequest, request: Request):
 
 
 @app.get("/models/{artifact_id}/download")
-def download_trained_model(artifact_id: str):
+def download_trained_model(artifact_id: str, request: Request):
+    owner_id = authenticated_user_id(request)
+    if not model_export.artifact_owned_by(artifact_id, owner_id):
+        raise HTTPException(status_code=404, detail="Model package not found.")
     try:
         path = model_export.artifact_path(artifact_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="Model package not found.")
     if not path.is_file():
-        raise HTTPException(status_code=404, detail="Model package not found. Train a model to create a download.")
+        raise HTTPException(status_code=404, detail="Model package not found.")
     return FileResponse(path, media_type="application/zip", filename=f"daisy-model-{artifact_id}.zip")
 
 

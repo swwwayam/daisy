@@ -21,6 +21,7 @@ import main
 import model_export
 import model_training
 from daisy_predict import predict, transform
+from resource_access import ResourceOwners
 
 
 def raw_data():
@@ -145,13 +146,60 @@ class ModelExportTests(unittest.TestCase):
             identifier = summary["model_artifact"]["artifact_id"]
             main.DATASETS.clear()
             main.DATASET_TRANSFORMS.clear()
-            downloaded = client.get(f"/models/{identifier}/download", headers=auth)
+            with patch.object(main, "DATASET_OWNERS", ResourceOwners()):
+                downloaded = client.get(f"/models/{identifier}/download", headers=auth)
             self.assertEqual(downloaded.status_code, 200)
             self.assertEqual(downloaded.headers["content-type"], "application/zip")
             self.assertIn("attachment", downloaded.headers["content-disposition"])
             self.assertTrue(zipfile.is_zipfile(io.BytesIO(downloaded.content)))
             self.assertEqual(client.get("/models/not-a-uuid/download", headers=auth).status_code, 404)
             self.assertEqual(client.get("/models/00000000-0000-0000-0000-000000000000/download", headers=auth).status_code, 404)
+
+    def test_model_download_checks_persisted_owner_and_denies_legacy_packages(self):
+        raw = raw_data()[["amount", "target"]].dropna()
+        fitted = {}
+        result = model_training.train_and_evaluate(raw, "target", ["logistic_regression"], fitted_models=fitted)
+        artifact = model_export.export_model(
+            fitted[result["best_model"]], raw, "target", [], result, "ds", "run", owner_id="user-a"
+        )
+        identifier = artifact["artifact_id"]
+        path = model_export.artifact_path(identifier)
+        manifest = path.with_suffix(".owner.json")
+        with zipfile.ZipFile(path) as archive:
+            self.assertNotIn("owner_id", json.loads(archive.read("metadata.json")))
+            self.assertFalse(any("owner" in name for name in archive.namelist()))
+        with TestClient(main.app) as client, patch.object(
+            main, "validate_access_token", new=AsyncMock(side_effect=lambda token: {"id": token})
+        ):
+            url = f"/models/{identifier}/download"
+            self.assertEqual(client.get(url, headers={"Authorization": "Bearer user-a"}).status_code, 200)
+            denied = client.get(url, headers={"Authorization": "Bearer user-b"})
+            missing = client.get("/models/00000000-0000-0000-0000-000000000000/download", headers={"Authorization": "Bearer user-b"})
+            self.assertEqual(denied.status_code, 404)
+            self.assertEqual(denied.json(), missing.json())
+            self.assertEqual(client.get(url).status_code, 401)
+            for contents in ("invalid-json", "[]", json.dumps({"format_version": 1, "artifact_id": "wrong", "owner_id": "user-a"})):
+                manifest.write_text(contents, encoding="utf-8")
+                self.assertEqual(client.get(url, headers={"Authorization": "Bearer user-a"}).status_code, 404)
+            manifest.unlink()
+            self.assertEqual(client.get(url, headers={"Authorization": "Bearer user-a"}).status_code, 404)
+
+    def test_failed_package_publication_removes_ownership_metadata(self):
+        raw = raw_data()[["amount", "target"]].dropna()
+        fitted = {}
+        result = model_training.train_and_evaluate(raw, "target", ["logistic_regression"], fitted_models=fitted)
+        original_replace = Path.replace
+
+        def fail_zip_publication(path, destination):
+            if str(destination).endswith(".zip"):
+                raise OSError("Disk unavailable")
+            return original_replace(path, destination)
+
+        with patch.object(Path, "replace", fail_zip_publication), self.assertRaises(OSError):
+            model_export.export_model(
+                fitted[result["best_model"]], raw, "target", [], result, "ds", "run", owner_id="user-a"
+            )
+        self.assertEqual(list(Path(self.directory.name).iterdir()), [])
 
     def test_failed_candidates_do_not_export_or_reuse_a_winner(self):
         raw = raw_data()[["amount", "target"]].dropna()
