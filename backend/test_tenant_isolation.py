@@ -89,3 +89,33 @@ class TenantIsolationTests(unittest.TestCase):
         with patch.object(main, "ai_client", None):
             response = self.client.post("/agents/eda", headers=self.user_a, json={"dataset_id": outputs[0]})
         self.assertEqual(response.status_code, 200, response.text)
+
+    def test_foreign_dataset_cannot_reach_feature_engineering_or_model_selection(self):
+        dataset_id = self.upload()
+        with patch.object(main, "generate_ai_text") as ai:
+            for endpoint in ("feature-engineering", "model-selection"):
+                response = self.client.post(
+                    f"/agents/{endpoint}", headers=self.user_b,
+                    json={"dataset_id": dataset_id, "target_column": "target"},
+                )
+                self.assertEqual(response.status_code, 404)
+            ai.assert_not_called()
+
+    def test_engineered_outputs_keep_the_owner_and_unique_identity(self):
+        dataset_id = self.upload()
+        outputs = []
+        with patch.object(main, "ai_client", object()), patch.object(
+            main, "generate_ai_text", return_value=json.dumps({"summary": "Keep features", "actions": []})
+        ):
+            for _ in range(2):
+                response = self.client.post(
+                    "/agents/feature-engineering", headers=self.user_a,
+                    json={"dataset_id": dataset_id, "target_column": "target"},
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                outputs.append(response.json()["engineered_dataset_id"])
+        self.assertNotEqual(*outputs)
+        for child in outputs:
+            self.assertTrue(main.DATASET_OWNERS.permits(child, "user-a"))
+            self.assertEqual(main.DATASET_PARENTS[child], dataset_id)
+            self.assertEqual(self.client.get(f"/dataset/{child}/summary", headers=self.user_b).status_code, 404)

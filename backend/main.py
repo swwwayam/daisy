@@ -780,17 +780,14 @@ class FeatureEngineeringRequest(BaseModel):
 
 
 @app.post("/agents/feature-engineering")
-def run_feature_engineering_agent(req: FeatureEngineeringRequest):
+def run_feature_engineering_agent(req: FeatureEngineeringRequest, request: Request):
     """First agent to use the standardized output envelope (agent_schema.py,
     resolves Decisions.md OD-4). Same Sense -> Reason -> Act discipline as
     the Data Cleaning Agent — Nemotron only ever picks from a fixed action
     menu; pandas/scikit-learn does the actual work."""
 
-    if req.dataset_id not in DATASETS:
-        raise HTTPException(
-            status_code=404,
-            detail="Dataset not found. Upload it again."
-        )
+    owner_id = authenticated_user_id(request)
+    df = require_owned_dataset(req.dataset_id, owner_id)
 
     if ai_client is None:
         raise HTTPException(
@@ -799,7 +796,6 @@ def run_feature_engineering_agent(req: FeatureEngineeringRequest):
         )
 
     workflow_id = req.workflow_id or new_workflow_id()
-    df = DATASETS[req.dataset_id]
 
     with Timer() as timer:
 
@@ -846,9 +842,7 @@ def run_feature_engineering_agent(req: FeatureEngineeringRequest):
 
         steps = steps + fallback_steps
 
-    engineered_id = f"{req.dataset_id}-engineered"
-    DATASETS[engineered_id] = engineered_df
-    DATASET_TRANSFORMS[engineered_id] = fitted_steps
+    engineered_id = create_derived_dataset(req.dataset_id, owner_id, engineered_df, fitted_steps)
 
     any_failed = any(s["status"] == "failed" for s in steps)
     status = "partial" if any_failed else "success"
@@ -914,7 +908,7 @@ class ModelSelectionRequest(BaseModel):
 
 
 @app.post("/agents/model-selection")
-def run_model_selection_agent(req: ModelSelectionRequest):
+def run_model_selection_agent(req: ModelSelectionRequest, request: Request):
     """This agent does not transform the dataset — it recommends which ML
     algorithms to try next. Problem type (classification vs. regression)
     is decided DETERMINISTICALLY by looking at the target column, never
@@ -922,8 +916,7 @@ def run_model_selection_agent(req: ModelSelectionRequest):
     a validation guardrail strips out anything it invents that isn't in
     that vocabulary — this plays the same safety-net role the 'Act' step
     plays in the data-transforming agents."""
-    if req.dataset_id not in DATASETS:
-        raise HTTPException(status_code=404, detail="Dataset not found. Upload it again.")
+    df = require_owned_dataset(req.dataset_id, authenticated_user_id(request))
     if ai_client is None:
         raise HTTPException(
             status_code=503,
@@ -931,7 +924,6 @@ def run_model_selection_agent(req: ModelSelectionRequest):
         )
 
     workflow_id = req.workflow_id or new_workflow_id()
-    df = DATASETS[req.dataset_id]
 
     with Timer() as timer:
         # 1. SENSE (deterministic)
