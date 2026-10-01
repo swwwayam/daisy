@@ -204,6 +204,17 @@ DATASET_PARENTS: dict[str, str] = {}
 DATASET_TRANSFORMS: dict[str, list] = {}
 
 
+def create_derived_dataset(parent_id: str, owner_id: str, df: pd.DataFrame, steps: list) -> str:
+    """Keep lineage private and give each stage execution its own identity."""
+    require_owned_dataset(parent_id, owner_id)
+    dataset_id = str(uuid.uuid4())
+    DATASET_OWNERS.register(dataset_id, owner_id)
+    DATASETS[dataset_id] = df
+    DATASET_PARENTS[dataset_id] = parent_id
+    DATASET_TRANSFORMS[dataset_id] = steps
+    return dataset_id
+
+
 def save_pipeline_result(dataset_id: str, stage: str, result: dict, child_dataset_id: str | None = None):
     """Save an agent result against the current dataset and optionally its child."""
     PIPELINE_CONTEXT.setdefault(dataset_id, {})[stage] = result
@@ -630,16 +641,14 @@ class CleaningRequest(BaseModel):
 
 
 @app.post("/agents/data-cleaning")
-def run_data_cleaning_agent(req: CleaningRequest):
-    if req.dataset_id not in DATASETS:
-        raise HTTPException(status_code=404, detail="Dataset not found. Upload it again.")
+def run_data_cleaning_agent(req: CleaningRequest, request: Request):
+    owner_id = authenticated_user_id(request)
+    df = require_owned_dataset(req.dataset_id, owner_id)
     if ai_client is None:
         raise HTTPException(
             status_code=503,
             detail="Data Cleaning Agent needs GROQ_API_KEY to be set on the server.",
         )
-
-    df = DATASETS[req.dataset_id]
 
     unknown_policy_columns = [column for column in req.zero_as_missing if column not in df.columns]
     non_numeric_policy_columns = [
@@ -678,9 +687,7 @@ def run_data_cleaning_agent(req: CleaningRequest):
         df, policy_actions + plan["actions"], fitted_steps=fitted_steps
     )
 
-    cleaned_id = f"{req.dataset_id}-cleaned"
-    DATASETS[cleaned_id] = cleaned_df
-    DATASET_TRANSFORMS[cleaned_id] = fitted_steps
+    cleaned_id = create_derived_dataset(req.dataset_id, owner_id, cleaned_df, fitted_steps)
 
     result_payload = {
         "summary": plan.get("summary", ""),
@@ -704,15 +711,8 @@ class EDARequest(BaseModel):
 
 
 @app.post("/agents/eda")
-def run_eda_agent(req: EDARequest):
-
-    if req.dataset_id not in DATASETS:
-        raise HTTPException(
-            status_code=404,
-            detail="Dataset not found. Upload it again."
-        )
-
-    df = DATASETS[req.dataset_id]
+def run_eda_agent(req: EDARequest, request: Request):
+    df = require_owned_dataset(req.dataset_id, authenticated_user_id(request))
 
     # ---------- SENSE ----------
     eda_report = agents.profile_for_eda(df)

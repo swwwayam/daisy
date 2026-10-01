@@ -1,4 +1,5 @@
 """API regressions using two valid sessions to test resource authorization."""
+import json
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -55,3 +56,36 @@ class TenantIsolationTests(unittest.TestCase):
         dataset_id = self.upload()
         self.assertEqual(self.client.get(f"/dataset/{dataset_id}/summary").status_code, 401)
         self.assertEqual(self.client.post("/upload-dataset").status_code, 401)
+
+    def test_foreign_dataset_is_rejected_before_cleaning_or_eda_work(self):
+        dataset_id = self.upload()
+        with patch.object(main, "generate_ai_text") as ai, patch.object(main.agents, "profile_for_eda") as eda:
+            for endpoint in ("data-cleaning", "eda"):
+                response = self.client.post(
+                    f"/agents/{endpoint}", headers=self.user_b, json={"dataset_id": dataset_id}
+                )
+                self.assertEqual(response.status_code, 404)
+            ai.assert_not_called()
+            eda.assert_not_called()
+
+    def test_cleaning_outputs_inherit_ownership_and_do_not_overwrite_previous_runs(self):
+        dataset_id = self.upload()
+        outputs = []
+        with patch.object(main, "ai_client", object()), patch.object(
+            main, "generate_ai_text", return_value=json.dumps({"summary": "No changes", "actions": []})
+        ):
+            for _ in range(2):
+                response = self.client.post(
+                    "/agents/data-cleaning", headers=self.user_a, json={"dataset_id": dataset_id}
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                outputs.append(response.json()["cleaned_dataset_id"])
+        self.assertNotEqual(outputs[0], outputs[1])
+        for child in outputs:
+            self.assertTrue(main.DATASET_OWNERS.permits(child, "user-a"))
+            self.assertEqual(main.DATASET_PARENTS[child], dataset_id)
+            self.assertEqual(self.client.get(f"/dataset/{child}/download", headers=self.user_b).status_code, 404)
+            self.assertEqual(self.client.post("/agents/eda", headers=self.user_b, json={"dataset_id": child}).status_code, 404)
+        with patch.object(main, "ai_client", None):
+            response = self.client.post("/agents/eda", headers=self.user_a, json={"dataset_id": outputs[0]})
+        self.assertEqual(response.status_code, 200, response.text)

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 import main
+from resource_access import ResourceOwners
 
 
 class CleaningPolicyApiTests(unittest.TestCase):
@@ -55,8 +56,10 @@ class CleaningPolicyApiTests(unittest.TestCase):
             TestClient(main.app) as client,
             patch.object(main, "validate_access_token", new=AsyncMock(return_value={"id": "test-user"})),
             patch.object(main, "ai_client", object()),
+            patch.object(main, "DATASET_OWNERS", ResourceOwners()),
             patch.dict(main.DATASETS, {"dataset": main.pd.DataFrame({"value": [0, 1]})}, clear=True),
         ):
+            main.DATASET_OWNERS.register("dataset", "test-user")
             response = client.post(
                 "/agents/data-cleaning", headers=self.auth,
                 json={"dataset_id": "dataset", "zero_as_missing": ["does_not_exist"]},
