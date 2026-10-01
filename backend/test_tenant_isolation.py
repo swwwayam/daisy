@@ -158,3 +158,48 @@ class TenantIsolationTests(unittest.TestCase):
         main.DATASET_PARENTS[dataset_id] = dataset_id
         for response in self.training_requests(dataset_id, self.user_a):
             self.assertEqual(response.status_code, 409)
+
+    def test_chat_does_not_send_foreign_data_or_history_to_the_provider(self):
+        dataset_id = self.upload()
+        main.PIPELINE_CONTEXT[dataset_id] = {"model_training": {"private": "owner-only-result"}}
+        with patch.object(main, "generate_ai_text") as ai, patch.object(main, "build_schema_report") as schema:
+            for configured in (None, object()):
+                with patch.object(main, "ai_client", configured):
+                    foreign = self.client.post("/chat", headers=self.user_b, json={"message": "Explain", "dataset_id": dataset_id})
+                    missing = self.client.post("/chat", headers=self.user_b, json={"message": "Explain", "dataset_id": "missing"})
+                    self.assertEqual(foreign.status_code, 404)
+                    self.assertEqual(foreign.json(), missing.json())
+            ai.assert_not_called()
+            schema.assert_not_called()
+
+    def test_chat_authorizes_history_ancestors_and_allows_owner_or_no_dataset(self):
+        dataset_id = self.upload()
+        parent = self.upload(self.user_b)
+        with patch.object(main, "ai_client", object()), patch.object(main, "generate_ai_text", return_value="Real provider reply") as ai:
+            for dataset in (None, dataset_id):
+                response = self.client.post("/chat", headers=self.user_a, json={"message": "hi", "dataset_id": dataset})
+                self.assertEqual(response.json(), {"reply": "Real provider reply"})
+            self.assertEqual(ai.call_count, 2)
+            ai.reset_mock()
+            main.DATASET_PARENTS[dataset_id] = parent
+            response = self.client.post("/chat", headers=self.user_a, json={"message": "Explain history", "dataset_id": dataset_id})
+            self.assertEqual(response.status_code, 404)
+            ai.assert_not_called()
+
+    def test_every_dataset_agent_rejects_foreign_missing_and_anonymous_requests(self):
+        dataset_id = self.upload()
+        for endpoint, fields in (
+            ("data-cleaning", {}), ("eda", {}),
+            ("feature-engineering", {"target_column": "target"}),
+            ("model-selection", {"target_column": "target"}),
+            ("model-training", {"target_column": "target", "candidate_models": ["logistic_regression"]}),
+            ("evaluation", {"target_column": "target", "model_name": "logistic_regression"}),
+        ):
+            with self.subTest(endpoint=endpoint):
+                payload = {"dataset_id": dataset_id, **fields}
+                foreign = self.client.post(f"/agents/{endpoint}", headers=self.user_b, json=payload)
+                missing = self.client.post(f"/agents/{endpoint}", headers=self.user_b, json={**payload, "dataset_id": "missing"})
+                self.assertEqual(foreign.status_code, 404)
+                self.assertEqual(foreign.json(), missing.json())
+                self.assertEqual(self.client.post(f"/agents/{endpoint}", json=payload).status_code, 401)
+        self.assertEqual(self.client.post("/chat", json={"message": "hi"}).status_code, 401)

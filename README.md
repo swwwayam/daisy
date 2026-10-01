@@ -421,6 +421,12 @@ build/
 API keys must be supplied through environment variables and should never
 be hard-coded into the source code or committed to GitHub.
 
+Datasets, derived outputs, pipeline chat context, and model downloads are restricted
+to their authenticated owner. Model download ownership persists beside each ZIP;
+datasets and their ownership remain in memory and currently require one API worker.
+See [resource isolation and migration](backend/RESOURCE_ISOLATION.md) for guarantees,
+legacy model handling, and verification steps.
+
 ------------------------------------------------------------------------
 
 ## 🧪 Testing
