@@ -432,7 +432,8 @@ def readiness_check():
 
 
 @app.post("/upload-dataset")
-async def upload_dataset(file: UploadFile = File(...)):
+async def upload_dataset(request: Request, file: UploadFile = File(...)):
+    owner_id = authenticated_user_id(request)
     if not (file.filename or "").lower().endswith(".csv"):
         raise HTTPException(
             status_code=400,
@@ -495,6 +496,7 @@ async def upload_dataset(file: UploadFile = File(...)):
         )
 
     dataset_id = str(uuid.uuid4())
+    DATASET_OWNERS.register(dataset_id, owner_id)
     DATASETS[dataset_id] = df
     DATASET_TRANSFORMS[dataset_id] = [{"type": "normalize"}]
 
@@ -535,11 +537,10 @@ def build_schema_report(df: pd.DataFrame) -> dict:
 
 
 @app.get("/dataset/{dataset_id}/summary")
-def get_dataset_summary(dataset_id: str):
+def get_dataset_summary(dataset_id: str, request: Request):
     """Lets the frontend re-fetch the schema report without re-uploading."""
-    if dataset_id not in DATASETS:
-        raise HTTPException(status_code=404, detail="Dataset not found. Upload it again.")
-    return build_schema_report(DATASETS[dataset_id])
+    df = require_owned_dataset(dataset_id, authenticated_user_id(request))
+    return build_schema_report(df)
 
 
 class ChatRequest(BaseModel):
@@ -1217,10 +1218,9 @@ def run_evaluation_agent(req: EvaluationRequest):
 
 
 @app.get("/dataset/{dataset_id}/download")
-def download_dataset(dataset_id: str):
-    if dataset_id not in DATASETS:
-        raise HTTPException(status_code=404, detail="Dataset not found.")
-    csv_text = DATASETS[dataset_id].to_csv(index=False)
+def download_dataset(dataset_id: str, request: Request):
+    df = require_owned_dataset(dataset_id, authenticated_user_id(request))
+    csv_text = df.to_csv(index=False)
     return StreamingResponse(
         io.StringIO(csv_text),
         media_type="text/csv",
