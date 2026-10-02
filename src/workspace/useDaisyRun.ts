@@ -11,6 +11,7 @@ import {
   type ModelSelectionResult,
   type TrainingResult,
   type SavedRun,
+  type InputPolicy,
 } from "../services/daisy";
 
 export type StageId =
@@ -239,17 +240,27 @@ export function useDaisyRun() {
         () => daisy.uploadDataset(file),
         (r) =>
           setS((prev) => ({
-            ...prev,
+            ...initialState,
             upload: r,
             workflowId: crypto.randomUUID(),
             originalDatasetId: r.dataset_id ?? null,
             currentDatasetId: r.dataset_id ?? null,
             engineeredColumns: [...(r.numerical_columns ?? []), ...(r.categorical_columns ?? [])],
-            status: { ...prev.status, dataset: "done", cleaning: "available" },
+            status: { ...initialStatus, dataset: r.review_available ? "waiting" : "done", cleaning: r.review_available ? "idle" : "available" },
           }))
       ),
     [run]
   );
+
+  const reviewInput = useCallback((policy: InputPolicy) => {
+    if (!s.originalDatasetId) return;
+    return run("dataset", () => daisy.reviewDataset(s.originalDatasetId as string, policy), result => setS(prev => ({
+      ...initialState, workflowId: prev.workflowId, originalDatasetId: prev.originalDatasetId,
+      currentDatasetId: result.dataset_id ?? null, upload: result,
+      engineeredColumns: [...(result.numerical_columns ?? []), ...(result.categorical_columns ?? [])],
+      status: { ...initialStatus, dataset: "done", cleaning: "available" },
+    })));
+  }, [run, s.originalDatasetId]);
 
   const runCleaning = useCallback((zeroAsMissing: string[] = []) => {
     if (!s.currentDatasetId) return;
@@ -433,5 +444,5 @@ export function useDaisyRun() {
 
   const reset = useCallback(() => setS(initialState), []);
 
-  return { state: s, savedRuns, historyError, historyLoading, historyDurable, historyOffset, historyNextOffset, loadHistory, restore, acceptedModels, upload, runCleaning, runEda, runFeature, selectTarget, runSelection, runTraining, runEvaluation, sendChat, download, reset, setStatus };
+  return { state: s, savedRuns, historyError, historyLoading, historyDurable, historyOffset, historyNextOffset, loadHistory, restore, acceptedModels, upload, reviewInput, runCleaning, runEda, runFeature, selectTarget, runSelection, runTraining, runEvaluation, sendChat, download, reset, setStatus };
 }

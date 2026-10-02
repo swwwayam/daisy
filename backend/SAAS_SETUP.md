@@ -54,6 +54,21 @@ live cloud policies; verify account A/B isolation after applying migrations.
 
 ## Training worker
 
+### Source data and interpretation review
+
+New uploads keep an owner-filtered copy of the exact source CSV. Literal NA, ?, -,
+and similar categories are preserved by default; blank cells are missing by default.
+Leading-zero identifiers remain text unless the user explicitly selects numeric.
+The dataset stage now asks users to confirm global/per-column missing tokens and
+column types before unlocking cleaning. Applying a review creates a derived dataset
+and resets later stages. Training reads the original CSV under the reviewed policy;
+the same normalization is included in exported prediction helpers. Original downloads
+are authenticated. Older uploads without a retained source require re-upload for review.
+
+Source copies add to storage usage. No external account migration is performed here.
+
+### Running the queue
+
 With durable persistence enabled, training requests return a job ID immediately.
 The frontend polls status, offers cancellation, and saves the job ID for resuming
 after refresh. Start one worker in a second terminal from `backend`:

@@ -109,7 +109,9 @@ def _fit_recorded_preprocessing(
         kind = saved.get("type")
         column = saved.get("column")
         if kind == "normalize":
-            fitted.append({"type": "normalize"})
+            from daisy_predict import normalize_input
+            current = normalize_input(current, saved)
+            fitted.append(dict(saved))
             continue
         if (target_column is not None and column == target_column) or kind == "drop_rows_missing_target":
             ignored_target_steps.append(kind)

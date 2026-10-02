@@ -68,6 +68,7 @@ import feature_engineering
 import model_selection
 import model_training
 import model_export
+from input_review import InputReview, read_source
 from resource_access import ResourceOwners
 from persistence import build_store, PersistenceError, json_safe
 from job_queue import build_queue, QueueError
@@ -188,6 +189,7 @@ app.add_middleware(
 # Datasets and their immutable owners live in this API process. Persist both
 # together before running multiple workers or restoring datasets after restart.
 DATASETS: dict[str, pd.DataFrame] = {}
+RAW_UPLOADS: dict[str, bytes] = {}
 DATASET_OWNERS = ResourceOwners()
 
 
@@ -238,7 +240,7 @@ def persist_dataset(dataset_id: str, update_settings=False):
         if saved:
             DATASET_DETAILS[dataset_id] = saved.get("details", {})
     # Training refits action descriptions, so no stored pickle is needed.
-    steps = [{key: step[key] for key in ("type", "column", "strategy", "column_b", "value", "fill") if key in step}
+    steps = [{key: step[key] for key in ("type", "column", "strategy", "column_b", "value", "fill", "missing_tokens", "column_tokens", "column_types", "blank_is_missing") if key in step}
              for step in DATASET_TRANSFORMS.get(dataset_id, [])]
     metadata = {"parent": DATASET_PARENTS.get(dataset_id), "steps": steps,
                 "context": PIPELINE_CONTEXT.get(dataset_id, {}), "details": DATASET_DETAILS.get(dataset_id, {})}
@@ -275,7 +277,7 @@ def owned_source_dataset(dataset_id: str, owner_id: str) -> str:
 
 
 def agent_planning_frame(dataset_id: str, owner_id: str, target_column=None):
-    source = require_owned_dataset(owned_source_dataset(dataset_id, owner_id), owner_id)
+    source = interpreted_source(dataset_id, owner_id)
     # Tiny datasets can be inspected but cannot produce a scored training run.
     if len(source.drop_duplicates()) < 15:
         return require_owned_dataset(dataset_id, owner_id)
@@ -546,37 +548,7 @@ async def upload_dataset(request: Request, file: UploadFile = File(...)):
         )
 
     try:
-        df = pd.read_csv(
-            io.BytesIO(raw_bytes),
-            keep_default_na=True
-        )
-
-        # Detect empty strings and whitespace-only cells as missing
-        df = df.replace(r"^\s*$", np.nan, regex=True)
-
-        # Detect common textual representations of missing values
-        missing_tokens = [
-            "NA",
-            "N/A",
-            "na",
-            "n/a",
-            "NULL",
-            "null",
-            "None",
-            "none",
-            "?",
-            "-"
-        ]
-
-        object_columns = df.select_dtypes(
-            include=["object", "string"]
-        ).columns
-
-        for column in object_columns:
-            df[column] = df[column].replace(
-                missing_tokens,
-                np.nan
-            )
+        df, policy = read_source(raw_bytes)
 
     except Exception as e:
         raise HTTPException(
@@ -594,13 +566,19 @@ async def upload_dataset(request: Request, file: UploadFile = File(...)):
     dataset_id = str(uuid.uuid4())
     DATASET_OWNERS.register(dataset_id, owner_id)
     DATASETS[dataset_id] = df
-    DATASET_TRANSFORMS[dataset_id] = [{"type": "normalize"}]
-    DATASET_DETAILS[dataset_id] = {"filename": file.filename}
+    DATASET_TRANSFORMS[dataset_id] = [policy]
+    DATASET_DETAILS[dataset_id] = {"filename": file.filename, "source_available": True}
+    if resource_store.enabled:
+        resource_store.save(f"source-{dataset_id}", owner_id, "dataset", {"source_csv": True}, raw_bytes)
+    else:
+        RAW_UPLOADS[dataset_id] = raw_bytes
     persist_dataset(dataset_id)
 
     schema_report = build_schema_report(df)
     schema_report["dataset_id"] = dataset_id
     schema_report["filename"] = file.filename
+    schema_report["review_available"] = True
+    schema_report["input_policy"] = policy
 
     return schema_report
 
@@ -623,6 +601,7 @@ def build_schema_report(df: pd.DataFrame) -> dict:
         "columns": int(df.shape[1]),
         "numerical_columns": numerical_cols,
         "categorical_columns": categorical_cols,
+        "column_dtypes": {str(column): str(dtype) for column, dtype in df.dtypes.items()},
         "missing_values": missing_report,
         "zero_values": zero_values,
         "duplicate_rows": int(df.duplicated().sum()),
@@ -639,6 +618,51 @@ def get_dataset_summary(dataset_id: str, request: Request):
     """Lets the frontend re-fetch the schema report without re-uploading."""
     df = require_owned_dataset(dataset_id, authenticated_user_id(request))
     return build_schema_report(df)
+
+
+def source_bytes(dataset_id, owner):
+    root = owned_source_dataset(dataset_id, owner)
+    if not DATASET_DETAILS.get(root, {}).get("source_available"):
+        raise HTTPException(status_code=409, detail="Original CSV is unavailable for this older upload. Upload it again to review raw values.")
+    if resource_store.enabled:
+        saved = resource_store.get(f"source-{root}", owner, "dataset")
+        if not saved or saved["metadata"].get("source_csv") is not True:
+            raise HTTPException(status_code=404, detail="Original CSV not found.")
+        return saved["blob"]
+    if root not in RAW_UPLOADS:
+        raise HTTPException(status_code=404, detail="Original CSV not found.")
+    return RAW_UPLOADS[root]
+
+
+def interpreted_source(dataset_id, owner):
+    root = owned_source_dataset(dataset_id, owner)
+    if not DATASET_DETAILS.get(root, {}).get("source_available"):
+        return require_owned_dataset(root, owner)
+    policy = next((step for step in DATASET_TRANSFORMS.get(dataset_id, []) if step.get("type") == "normalize"), {})
+    settings = {key: policy[key] for key in InputReview.model_fields if key in policy}
+    return read_source(source_bytes(root, owner), InputReview(**settings))[0]
+
+
+@app.get("/dataset/{dataset_id}/source/download")
+def download_original_csv(dataset_id: str, request: Request):
+    return StreamingResponse(io.BytesIO(source_bytes(dataset_id, authenticated_user_id(request))),
+                             media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="daisy-original.csv"'})
+
+
+@app.post("/dataset/{dataset_id}/review")
+def review_dataset(dataset_id: str, req: InputReview, request: Request):
+    owner = authenticated_user_id(request)
+    root = owned_source_dataset(dataset_id, owner)
+    try:
+        frame, policy = read_source(source_bytes(root, owner), req)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=f"Review could not be applied: {exc}") from exc
+    check_training_limits(frame, [])
+    reviewed = create_derived_dataset(root, owner, frame, [policy])
+    DATASET_DETAILS[reviewed]["input_policy"] = policy
+    persist_dataset(reviewed)
+    return {**build_schema_report(frame), "dataset_id": reviewed, "source_dataset_id": root,
+            "filename": DATASET_DETAILS.get(root, {}).get("filename"), "review_available": True, "input_policy": policy}
 
 
 class ChatRequest(BaseModel):
@@ -1327,7 +1351,7 @@ def execute_model_training(req: ModelTrainingRequest, request: Request):
             result = model_training.train_and_evaluate(
                 df, req.target_column, req.candidate_models, test_size=req.test_size,
                 fitted_models=fitted_models,
-                raw_df=DATASETS[source_id],
+                raw_df=interpreted_source(req.dataset_id, owner_id),
                 preprocessing_steps=DATASET_TRANSFORMS.get(req.dataset_id, []),
                 fitted_preprocessing=fitted_preprocessing,
             )
@@ -1341,7 +1365,7 @@ def execute_model_training(req: ModelTrainingRequest, request: Request):
             artifact = model_export.export_model(
                 fitted_models[result["best_model"]], df, req.target_column,
                 fitted_preprocessing, result, req.dataset_id, workflow_id,
-                source_df=DATASETS[source_id],
+                source_df=interpreted_source(req.dataset_id, owner_id),
                 owner_id=owner_id,
             )
             resource_store.save(artifact["artifact_id"], owner_id, "artifact", artifact,

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { daisy, type Dict, type TrainingResult } from "../services/daisy";
 import { parseModels, STAGES, type StageId, type StageStatus, useDaisyRun } from "./useDaisyRun";
+import { InputReviewPanel } from "./InputReviewPanel";
 import {
   ActionList,
   Empty,
@@ -121,9 +122,9 @@ function DatasetPanel({ run, focusSelf }: { run: Run; focusSelf: () => void }) {
     run.upload(f);
   }
 
-  if (st === "running") return <Loader message="DAISY is reading your dataset…" />;
+  if (st === "running" && !state.upload) return <Loader message="DAISY is reading your dataset…" />;
 
-  if (st === "error") return <ErrorBox message={state.errors.dataset || "Upload failed"} onRetry={() => inputRef.current?.click()} />;
+  if (st === "error" && !state.upload) return <ErrorBox message={state.errors.dataset || "Upload failed"} onRetry={() => inputRef.current?.click()} />;
 
   if (!state.upload) {
     return (
@@ -153,7 +154,7 @@ function DatasetPanel({ run, focusSelf }: { run: Run; focusSelf: () => void }) {
           <h3 className="panel-title">{u.filename || "Untitled dataset"}</h3>
           {u.dataset_id && <div className="mono id-chip">{u.dataset_id}</div>}
         </div>
-        <button className="pill pill-ghost" onClick={() => inputRef.current?.click()}>Replace</button>
+        <button className="pill pill-ghost" disabled={Object.values(state.status).includes("running")} onClick={() => inputRef.current?.click()}>Replace</button>
         <input ref={inputRef} type="file" accept=".csv,text/csv" hidden onChange={(e) => handleFiles(e.target.files)} />
       </div>
       <div className="metric-grid">
@@ -169,6 +170,7 @@ function DatasetPanel({ run, focusSelf }: { run: Run; focusSelf: () => void }) {
         <div className="report-block"><h5>Categorical columns</h5><div className="tag-list">{u.categorical_columns.map((c) => <span className="tag alt" key={c}>{c}</span>)}</div></div>
       )}
       <div className="report-block"><h5>Preview</h5><PreviewTable rows={u.preview} /></div>
+      {u.review_available && <InputReviewPanel key={state.originalDatasetId} dataset={u} busy={Object.values(state.status).includes("running")} confirmed={st === "done"} error={state.errors.dataset} onReview={policy => { void run.reviewInput(policy); }} />}
     </div>
   );
 }

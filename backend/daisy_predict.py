@@ -50,6 +50,31 @@ def load_model(path=None):
     return joblib.load(path)
 
 
+def normalize_input(data, policy):
+    df = data.copy()
+    if policy.get("blank_is_missing", True):
+        df = df.replace(r"^\s*$", np.nan, regex=True)
+    defaults = ["NA", "N/A", "na", "n/a", "NULL", "null", "None", "none", "?", "-"]
+    tokens = policy.get("missing_tokens", defaults)
+    for name in df.columns:
+        if pd.api.types.is_object_dtype(df[name]) or pd.api.types.is_string_dtype(df[name]):
+            df[name] = df[name].replace([*tokens, *policy.get("column_tokens", {}).get(name, [])], np.nan)
+        kind = policy.get("column_types", {}).get(name, "auto")
+        if kind == "numeric":
+            df[name] = pd.to_numeric(df[name], errors="raise")
+        elif kind == "text":
+            df[name] = df[name].astype("string")
+        elif kind == "datetime":
+            df[name] = pd.to_datetime(df[name], errors="raise", utc=True)
+        elif kind == "auto" and not pd.api.types.is_numeric_dtype(df[name]):
+            # Infer a numeric type only when every nonmissing value is numeric.
+            converted = pd.to_numeric(df[name], errors="coerce")
+            leading_zeros = df[name].dropna().astype(str).str.match(r"^[+-]?0\d+").any()
+            if not leading_zeros and df[name].notna().any() and converted.notna().sum() == df[name].notna().sum():
+                df[name] = converted
+    return df
+
+
 def transform(bundle, data):
     if not isinstance(data, pd.DataFrame):
         raise ValueError("Prediction input must be a pandas DataFrame.")
@@ -62,9 +87,7 @@ def transform(bundle, data):
     for step in bundle["preprocessing"]:
         kind, col = step["type"], step.get("column")
         if kind == "normalize":
-            df = df.replace(r"^\s*$", np.nan, regex=True)
-            for name in df.select_dtypes(include=["object", "string"]).columns:
-                df[name] = df[name].replace(["NA", "N/A", "na", "n/a", "NULL", "null", "None", "none", "?", "-"], np.nan)
+            df = normalize_input(df, step)
         elif kind == "strip_whitespace":
             for name in step["columns"]:
                 if name in df and pd.api.types.is_string_dtype(df[name]):

@@ -64,6 +64,10 @@ export interface SavedRun {
 }
 
 export interface DatasetSummary {
+  review_available?: boolean;
+  input_policy?: InputPolicy;
+  column_dtypes?: Record<string, string>;
+  source_dataset_id?: string;
   rows?: number;
   columns?: number;
   numerical_columns?: string[];
@@ -86,6 +90,13 @@ export interface CleaningResult {
   steps?: Dict[];
   preview?: Dict[];
   cleaned_dataset_id?: string;
+}
+
+export interface InputPolicy {
+  missing_tokens: string[];
+  column_tokens: Record<string, string[]>;
+  column_types: Record<string, "auto" | "numeric" | "text" | "datetime">;
+  blank_is_missing: boolean;
 }
 
 export interface AgentResult extends Dict {
@@ -175,6 +186,16 @@ export const daisy = {
 
   async datasetSummary(datasetId: string): Promise<DatasetSummary> {
     return json(await fetch(`${BASE_URL}/dataset/${encodeURIComponent(datasetId)}/summary`, { headers: await authHeaders() }));
+  },
+
+  async reviewDataset(datasetId: string, policy: InputPolicy): Promise<DatasetSummary> {
+    return postJson(`/dataset/${encodeURIComponent(datasetId)}/review`, policy);
+  },
+
+  async downloadSource(datasetId: string): Promise<Blob> {
+    const response = await fetch(`${BASE_URL}/dataset/${encodeURIComponent(datasetId)}/source/download`, { headers: await authHeaders() });
+    if (!response.ok) throw new DaisyApiError(await readError(response), response.status);
+    return response.blob();
   },
 
   async chat(message: string, datasetId: string | null): Promise<{ reply: string }> {
