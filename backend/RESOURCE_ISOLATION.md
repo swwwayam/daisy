@@ -25,19 +25,20 @@ are not trusted.
 
 ## Deployment and migration
 
-Datasets, preprocessing plans, ownership, and pipeline context remain in memory.
-Run one API worker until these are persisted together. Restarting the backend
-requires re-uploading datasets; copying only a DataFrame into the store does not
-authorize access. Model ZIPs and their ownership records must be retained together
-in a private, backend-controlled artifact directory.
+Memory mode requires re-uploading datasets after restart. SQLite and Supabase modes
+persist owner-bound datasets, preprocessing specifications, lineage, pipeline
+context, and model packages. See [runtime setup](SAAS_SETUP.md). Copying only a
+DataFrame into the store does not authorize access. Retain local model ZIPs and
+their ownership records together; durable packages can also restore local caches.
 
 Legacy model ZIPs without an ownership record cannot be safely attributed to a
 user and are denied. Retrain them while signed in to create a new downloadable
 package. Do not assign owners based on an artifact ID submitted by a browser.
 
 The current boundary is the individual signed-in user. This change does not
-implement workspace sharing, database persistence, storage policies, or Supabase
-RLS integration for runtime resources. A future workspace implementation must
+implement workspace sharing. Durable modes now use an owner-only runtime table
+and private Storage buckets; the original workspace/project tables are not used
+for sharing runtime resources. A future workspace implementation must
 derive access from verified membership and persist resource ownership, rather
 than replacing these checks with a client-supplied workspace ID.
 

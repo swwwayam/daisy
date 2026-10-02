@@ -786,6 +786,42 @@ function StagePanel({ stage, run, goto }: { stage: StageId; run: Run; goto: (id:
 }
 
 /* ─── Workspace root ─── */
+function AIPrivacyControls({ run }: { run: Run }) {
+  const dataset = run.state.originalDatasetId;
+  const [enabled, setEnabled] = useState(true);
+  const [accountEnabled, setAccountEnabled] = useState(true);
+  const [sensitive, setSensitive] = useState<string[]>([]);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let active = true;
+    daisy.aiSettings(dataset).then(settings => { if (active) { setEnabled(settings.dataset_enabled); setAccountEnabled(settings.account_enabled); setSensitive(settings.sensitive_columns); } }).catch(e => { if (active) setError(e.message); });
+    return () => { active = false; };
+  }, [dataset]);
+  async function save(nextEnabled: boolean, nextSensitive: string[]) {
+    setBusy(true);
+    try { await daisy.setAiSettings(nextEnabled, dataset, nextSensitive); setEnabled(nextEnabled); setSensitive(nextSensitive); setError(""); }
+    catch (e) { setError(e instanceof Error ? e.message : "Could not save privacy settings"); }
+    finally { setBusy(false); }
+  }
+  async function saveAccount(nextEnabled: boolean) {
+    setBusy(true);
+    try { await daisy.setAiSettings(nextEnabled, null); setAccountEnabled(nextEnabled); setError(""); }
+    catch (e) { setError(e instanceof Error ? e.message : "Could not save account privacy settings"); }
+    finally { setBusy(false); }
+  }
+  const columns = [...(run.state.upload?.numerical_columns ?? []), ...(run.state.upload?.categorical_columns ?? [])];
+  return <details className="report-block"><summary>AI privacy controls</summary>
+    <p>AI receives masked column names, redacted aggregate statistics, and your messages. CSV rows and categorical examples are excluded.</p>
+    <label><input type="checkbox" checked={accountEnabled} disabled={busy || Object.values(run.state.status).includes("running")} onChange={e => { void saveAccount(e.target.checked); }} /> Allow AI reasoning for my account</label>
+    {dataset && <label><input type="checkbox" checked={enabled} disabled={!accountEnabled || busy || Object.values(run.state.status).includes("running")} onChange={e => { void save(e.target.checked, sensitive); }} /> Enable AI reasoning for this dataset</label>}
+    {(!accountEnabled || !enabled) && <p>Cleaning, encoding, model comparison, and evaluation use labeled rules. Chat stays disabled.</p>}
+    {dataset && <><p>Exclude detailed statistics for additional sensitive columns:</p><div className="col-grid">{columns.map(column => <button className={`col-chip ${sensitive.includes(column) ? "sel" : ""}`} key={column} disabled={busy || Object.values(run.state.status).includes("running")} onClick={() => { void save(enabled, sensitive.includes(column) ? sensitive.filter(c => c !== column) : [...sensitive, column]); }}>{column}</button>)}</div></>}
+    <p>Daily limits: 100 AI calls and 200,000 total tokens per account.</p>
+    {error && <p role="alert">{error}</p>}
+  </details>;
+}
+
 export default function Workspace({ onExit, onSignOut }: { onExit: () => void; onSignOut: () => void | Promise<void> }) {
   const run = useDaisyRun();
   const [focus, setFocus] = useState<StageId | null>(null);
@@ -818,6 +854,7 @@ export default function Workspace({ onExit, onSignOut }: { onExit: () => void; o
           {run.savedRuns.map(saved => <option key={saved.id} value={saved.id}>{String((saved.metadata.upload as Dict | undefined)?.filename || saved.id.slice(0, 8))} · {new Date(saved.updated_at).toLocaleDateString()}</option>)}
         </select></label>}
         {run.historyError && <p role="status">Run history: {run.historyError}</p>}
+        <AIPrivacyControls run={run} />
       </div>
 
       <PipelineRail status={run.state.status} active={displayed} onPick={goto} />

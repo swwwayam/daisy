@@ -127,6 +127,15 @@ export interface EvaluationResult extends AgentResult {
 
 /* ─── Endpoints ─── */
 export const daisy = {
+  async aiSettings(datasetId: string | null): Promise<{ enabled: boolean; account_enabled: boolean; dataset_enabled: boolean; sensitive_columns: string[]; disclosure: string }> {
+    return json(await fetch(`${BASE_URL}/ai-settings${datasetId ? `?dataset_id=${encodeURIComponent(datasetId)}` : ""}`, { headers: await authHeaders() }));
+  },
+
+  async setAiSettings(enabled: boolean, datasetId: string | null, sensitiveColumns: string[] = []): Promise<void> {
+    await json(await fetch(`${BASE_URL}/ai-settings${datasetId ? `?dataset_id=${encodeURIComponent(datasetId)}` : ""}`, {
+      method: "PUT", headers: await authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ enabled, sensitive_columns: sensitiveColumns }),
+    }));
+  },
   async savedRuns(): Promise<{ runs: { id: string; metadata: Dict; updated_at: string }[]; durable: boolean }> {
     return json(await fetch(`${BASE_URL}/runs`, { headers: await authHeaders() }));
   },

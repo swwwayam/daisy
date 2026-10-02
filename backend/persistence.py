@@ -1,6 +1,7 @@
 """Owner-filtered durable resources; JSON metadata and private binary objects."""
 import json
 import logging
+import math
 import os
 import sqlite3
 import uuid
@@ -15,6 +16,20 @@ class PersistenceError(RuntimeError):
     pass
 
 
+def json_safe(value):
+    if isinstance(value, dict):
+        return {str(k): json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(v) for v in value]
+    if hasattr(value, "item"):
+        return json_safe(value.item())
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
 class MemoryStore:
     enabled = False
 
@@ -26,6 +41,9 @@ class MemoryStore:
 
     def list(self, owner, kind):
         return []
+
+    def metadata(self, identifier, owner, kind):
+        return None
 
 
 class SQLiteStore:
@@ -45,6 +63,8 @@ class SQLiteStore:
         try:
             with db:
                 yield db
+        except sqlite3.Error as exc:
+            raise PersistenceError("Durable local storage unavailable. Check the backend database.") from exc
         finally:
             db.close()
 
@@ -64,6 +84,11 @@ class SQLiteStore:
         with self.connect() as db:
             rows = db.execute("SELECT id,metadata,updated_at FROM resources WHERE owner=? AND kind=? ORDER BY updated_at DESC LIMIT 30", (owner, kind)).fetchall()
         return [{"id": r["id"], "metadata": json.loads(r["metadata"]), "updated_at": r["updated_at"]} for r in rows]
+
+    def metadata(self, identifier, owner, kind):
+        with self.connect() as db:
+            row = db.execute("SELECT metadata FROM resources WHERE id=? AND owner=? AND kind=?", (identifier, owner, kind)).fetchone()
+        return json.loads(row["metadata"]) if row else None
 
 
 class SupabaseStore:
@@ -131,6 +156,10 @@ class SupabaseStore:
 
     def list(self, owner, kind):
         return self.request("GET", "/rest/v1/daisy_resources", params={"owner_id": f"eq.{owner}", "kind": f"eq.{kind}", "select": "id,metadata,updated_at", "order": "updated_at.desc", "limit": "30"}).json()
+
+    def metadata(self, identifier, owner, kind):
+        rows = self.request("GET", "/rest/v1/daisy_resources", params={**self.filters(identifier, owner, kind), "select": "metadata"}).json()
+        return rows[0]["metadata"] if rows else None
 
 
 def build_store():

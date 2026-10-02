@@ -69,13 +69,16 @@ import model_selection
 import model_training
 import model_export
 from resource_access import ResourceOwners
-from persistence import build_store, PersistenceError
+from persistence import build_store, PersistenceError, json_safe
 from job_queue import build_queue, QueueError
+from ai_privacy import build_budget, private_profile, restore_names, redact_text
 from agent_schema import Timer, build_agent_record, new_workflow_id
 
 load_dotenv()
 resource_store = build_store()
 job_queue = build_queue(resource_store)
+ai_budget = build_budget(resource_store)
+USER_AI_SETTINGS: dict[str, dict] = {}
 
 app = FastAPI(title="D.A.I.S.Y ML Backend", version="0.3.0")
 
@@ -227,15 +230,19 @@ DATASET_TRANSFORMS: dict[str, list] = {}
 DATASET_DETAILS: dict[str, dict] = {}
 
 
-def persist_dataset(dataset_id: str):
+def persist_dataset(dataset_id: str, update_settings=False):
     if not resource_store.enabled:
         return
+    if not update_settings:
+        saved = resource_store.metadata(dataset_id, DATASET_OWNERS.owner(dataset_id), "dataset")
+        if saved:
+            DATASET_DETAILS[dataset_id] = saved.get("details", {})
     # Training refits action descriptions, so no stored pickle is needed.
     steps = [{key: step[key] for key in ("type", "column", "strategy", "column_b", "value", "fill") if key in step}
              for step in DATASET_TRANSFORMS.get(dataset_id, [])]
     metadata = {"parent": DATASET_PARENTS.get(dataset_id), "steps": steps,
                 "context": PIPELINE_CONTEXT.get(dataset_id, {}), "details": DATASET_DETAILS.get(dataset_id, {})}
-    metadata = json.loads(json.dumps(metadata, default=lambda value: value.item() if hasattr(value, "item") else str(value)))
+    metadata = json_safe(metadata)
     resource_store.save(dataset_id, DATASET_OWNERS.owner(dataset_id), "dataset", metadata,
                         DATASETS[dataset_id].to_json(orient="table", date_format="iso", double_precision=15).encode())
 
@@ -424,9 +431,16 @@ def generate_ai_text(
     json_mode: bool = False,
     interactive: bool = False,
     system_prompt: str | None = None,
+    owner_id: str | None = None,
 ) -> str:
     if ai_client is None:
         raise RuntimeError("GROQ_API_KEY is not set on the server.")
+    reservation = None
+    if owner_id:
+        input_bytes = len(prompt.encode()) + len((system_prompt or "").encode())
+        if input_bytes > 32768:
+            raise HTTPException(status_code=413, detail="AI context exceeds 32 KB. Use a smaller schema or ask a shorter question.")
+        reservation = ai_budget.reserve(owner_id, input_bytes + max_tokens + 256)
 
     request_kwargs = {
         "model": GROQ_MODEL,
@@ -462,6 +476,9 @@ def generate_ai_text(
         getattr(response.usage, "completion_tokens", None),
         response.choices[0].finish_reason,
     )
+    total_tokens = getattr(response.usage, "total_tokens", None)
+    if reservation and isinstance(total_tokens, int) and total_tokens >= 0:
+        ai_budget.settle(reservation, owner_id, total_tokens)
     return response.choices[0].message.content or ""
 
 
@@ -572,6 +589,7 @@ async def upload_dataset(request: Request, file: UploadFile = File(...)):
             status_code=400,
             detail="The uploaded CSV has no rows."
         )
+    check_training_limits(df, [])
 
     dataset_id = str(uuid.uuid4())
     DATASET_OWNERS.register(dataset_id, owner_id)
@@ -624,8 +642,58 @@ def get_dataset_summary(dataset_id: str, request: Request):
 
 
 class ChatRequest(BaseModel):
-    message: str
+    message: str = Field(min_length=1, max_length=4000)
     dataset_id: str | None = None  # optional — lets the chat ground itself in real data
+
+
+class AISettingsRequest(BaseModel):
+    enabled: bool
+    sensitive_columns: list[str] = Field(default_factory=list, max_length=1000)
+
+
+def ai_settings(owner, dataset_id=None):
+    saved = resource_store.get(f"ai-{owner}", owner, "preferences")
+    account = saved["metadata"] if saved else USER_AI_SETTINGS.get(owner, {"enabled": True})
+    details = {}
+    if dataset_id:
+        root = owned_source_dataset(dataset_id, owner)
+        details = DATASET_DETAILS.get(root, {})
+        if resource_store.enabled:
+            latest = resource_store.metadata(root, owner, "dataset")
+            if latest:
+                details = latest.get("details", {})
+    return {"enabled": bool(account.get("enabled", True) and details.get("ai_enabled", True)),
+            "account_enabled": bool(account.get("enabled", True)),
+            "dataset_enabled": bool(details.get("ai_enabled", True)),
+            "sensitive_columns": details.get("sensitive_columns", []),
+            "disclosure": "AI receives pseudonymous column names and redacted aggregate statistics, plus your messages. CSV rows and categorical example values are excluded."}
+
+
+@app.get("/ai-settings")
+def read_ai_settings(request: Request, dataset_id: str | None = None):
+    return ai_settings(authenticated_user_id(request), dataset_id)
+
+
+@app.put("/ai-settings")
+def update_ai_settings(req: AISettingsRequest, request: Request, dataset_id: str | None = None):
+    owner = authenticated_user_id(request)
+    if dataset_id:
+        root = owned_source_dataset(dataset_id, owner)
+        if any(column not in DATASETS[root] for column in req.sensitive_columns):
+            raise HTTPException(status_code=400, detail="Sensitive columns must belong to the original dataset.")
+        DATASET_DETAILS.setdefault(root, {}).update(ai_enabled=req.enabled, sensitive_columns=req.sensitive_columns)
+        persist_dataset(root, update_settings=True)
+    else:
+        USER_AI_SETTINGS[owner] = {"enabled": req.enabled}
+        resource_store.save(f"ai-{owner}", owner, "preferences", USER_AI_SETTINGS[owner])
+    return ai_settings(owner, dataset_id)
+
+
+def provider_profile(profile, dataset_id, owner, strip_narratives=False):
+    settings = ai_settings(owner, dataset_id)
+    root = owned_source_dataset(dataset_id, owner)
+    columns = list(dict.fromkeys([*DATASETS[root].columns, *DATASETS[dataset_id].columns]))
+    return private_profile(json_safe(profile), columns, settings["sensitive_columns"], strip_narratives)
 
 
 class RunSnapshotRequest(BaseModel):
@@ -674,6 +742,8 @@ def chat(req: ChatRequest, request: Request):
     if req.dataset_id:
         df = require_owned_dataset(req.dataset_id, owner_id)
         owned_source_dataset(req.dataset_id, owner_id)
+    if not ai_settings(owner_id, req.dataset_id)["enabled"]:
+        return {"reply": "AI chat is disabled in your privacy settings. Pipeline controls and model downloads remain available."}
     if ai_client is None:
         return {"reply": "AI temporarily unavailable — GROQ_API_KEY is not set on the server."}
 
@@ -689,7 +759,7 @@ def chat(req: ChatRequest, request: Request):
     )
 
     if df is not None:
-        schema = build_schema_report(df)
+        schema, aliases = provider_profile(build_schema_report(df), req.dataset_id, owner_id)
         base_prompt += (
             f"\n\nCURRENT DATASET FACTS (use only these facts for dataset-specific claims):\n"
             f"- Rows: {schema['rows']}\n"
@@ -700,7 +770,8 @@ def chat(req: ChatRequest, request: Request):
             f"- Duplicate rows: {schema['duplicate_rows']}"
         )
 
-        base_prompt += build_chat_pipeline_context(req.dataset_id)
+        context, _ = provider_profile(get_pipeline_context(req.dataset_id), req.dataset_id, owner_id, strip_narratives=True)
+        base_prompt += "\n\nACTUAL PIPELINE RESULTS (numeric facts and executed action records):\n" + json.dumps(context)
     else:
         base_prompt += (
             "\n\nCURRENT SESSION: No dataset has been uploaded in this run. "
@@ -716,8 +787,14 @@ def chat(req: ChatRequest, request: Request):
             len(base_prompt),
             len(req.message),
         )
-        result = generate_ai_text(req.message, max_tokens=512, interactive=True, system_prompt=base_prompt)
-        return {"reply": result}
+        message = redact_text(req.message)
+        if req.dataset_id:
+            for name, alias in sorted(aliases.items(), key=lambda pair: len(pair[0]), reverse=True):
+                message = re.sub(r"\b" + re.escape(name) + r"\b", lambda _: alias, message)
+        result = generate_ai_text(message, max_tokens=512, interactive=True, system_prompt=base_prompt, owner_id=owner_id)
+        return {"reply": restore_names(result, aliases) if req.dataset_id else result}
+    except HTTPException:
+        raise
     except APITimeoutError:
         return {"reply": "Groq took too long to respond. Please try again in a moment."}
     except RateLimitError as error:
@@ -751,7 +828,8 @@ class CleaningRequest(BaseModel):
 def run_data_cleaning_agent(req: CleaningRequest, request: Request):
     owner_id = authenticated_user_id(request)
     df = require_owned_dataset(req.dataset_id, owner_id)
-    if ai_client is None:
+    use_ai = ai_settings(owner_id, req.dataset_id)["enabled"]
+    if use_ai and ai_client is None:
         raise HTTPException(
             status_code=503,
             detail="Data Cleaning Agent needs GROQ_API_KEY to be set on the server.",
@@ -783,12 +861,21 @@ def run_data_cleaning_agent(req: CleaningRequest, request: Request):
     profile = agents.profile_dataframe(planning_df)
 
     # 2. REASON — DeepSeek returns a strict-JSON cleaning plan
-    prompt = agents.build_cleaning_prompt(profile)
-    try:
-        result = generate_ai_text(prompt)
-        plan = agents.parse_plan(result)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Agent reasoning step failed: {e}")
+    if use_ai:
+        safe_profile, aliases = provider_profile(profile, req.dataset_id, owner_id)
+        prompt = agents.build_cleaning_prompt(safe_profile)
+        try:
+            result = generate_ai_text(prompt, max_tokens=2500, owner_id=owner_id)
+            plan = restore_names(agents.parse_plan(result), aliases)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Agent reasoning step failed: {type(e).__name__}")
+    else:
+        plan = {"summary": "Rule-based cleaning applied to missing cells; zero values follow your explicit policy.", "actions": [
+            {"type": "impute", "column": column, "strategy": "median" if pd.api.types.is_numeric_dtype(planning_df[column]) else "mode", "reasoning": "Rule-based missing-value imputation."}
+            for column in planning_df.columns if planning_df[column].isna().any() and planning_df[column].notna().any()
+        ]}
 
     # 3. ACT — pandas executes the plan, step by step, on a copy of the data
     fitted_steps = list(DATASET_TRANSFORMS.get(req.dataset_id, []))
@@ -821,7 +908,8 @@ class EDARequest(BaseModel):
 
 @app.post("/agents/eda")
 def run_eda_agent(req: EDARequest, request: Request):
-    df = require_owned_dataset(req.dataset_id, authenticated_user_id(request))
+    owner_id = authenticated_user_id(request)
+    df = require_owned_dataset(req.dataset_id, owner_id)
 
     # ---------- SENSE ----------
     eda_report = agents.profile_for_eda(df)
@@ -829,7 +917,8 @@ def run_eda_agent(req: EDARequest, request: Request):
     # ---------- REASON ----------
     summary = ""
 
-    if ai_client is not None:
+    if ai_client is not None and ai_settings(owner_id, req.dataset_id)["enabled"]:
+        safe_report, aliases = provider_profile(eda_report, req.dataset_id, owner_id)
 
         prompt = f"""
 You are DAISY's Exploratory Data Analysis Agent.
@@ -852,21 +941,25 @@ Do NOT invent facts.
 
 EDA REPORT:
 
-{eda_report}
+{safe_report}
 """
 
         try:
 
-            result = generate_ai_text(prompt)
+            result = generate_ai_text(prompt, max_tokens=1200, owner_id=owner_id)
 
-            summary = result
+            summary = restore_names(result, aliases)
 
+        except HTTPException:
+            raise
         except Exception:
 
             summary = (
                 "EDA completed successfully. "
                 "AI summary could not be generated."
             )
+    else:
+        summary = f"Rule-based EDA: {len(df)} rows, {len(df.columns)} columns, {int(df.isna().sum().sum())} missing cells. See the measured report below."
 
     eda_report["summary"] = summary
 
@@ -897,8 +990,9 @@ def run_feature_engineering_agent(req: FeatureEngineeringRequest, request: Reque
 
     owner_id = authenticated_user_id(request)
     df = require_owned_dataset(req.dataset_id, owner_id)
+    use_ai = ai_settings(owner_id, req.dataset_id)["enabled"]
 
-    if ai_client is None:
+    if use_ai and ai_client is None:
         raise HTTPException(
             status_code=503,
             detail="Feature Engineering Agent needs GROQ_API_KEY to be set on the server.",
@@ -915,7 +1009,8 @@ def run_feature_engineering_agent(req: FeatureEngineeringRequest, request: Reque
         )
 
         # 2. REASON
-        prompt = feature_engineering.build_feature_engineering_prompt(profile)
+        safe_profile, aliases = provider_profile(profile, req.dataset_id, owner_id)
+        prompt = feature_engineering.build_feature_engineering_prompt(safe_profile)
 
         try:
             # Use native JSON mode so Nemotron does not have to imitate JSON
@@ -924,8 +1019,11 @@ def run_feature_engineering_agent(req: FeatureEngineeringRequest, request: Reque
                 prompt,
                 max_tokens=2500,
                 json_mode=True,
-            )
-            plan = feature_engineering.parse_plan(result)
+                owner_id=owner_id,
+            ) if use_ai else json.dumps({"summary": "Rule-based encoding; strategies chosen from training rows.", "actions": []})
+            plan = restore_names(feature_engineering.parse_plan(result), aliases) if use_ai else feature_engineering.parse_plan(result)
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(
                 status_code=502,
@@ -934,6 +1032,7 @@ def run_feature_engineering_agent(req: FeatureEngineeringRequest, request: Reque
 
         # 3. ACT
         fitted_steps = list(DATASET_TRANSFORMS.get(req.dataset_id, []))
+        check_feature_expansion(df, plan["actions"])
         engineered_df, steps = feature_engineering.apply_feature_engineering_plan(
             df,
             plan["actions"],
@@ -949,6 +1048,7 @@ def run_feature_engineering_agent(req: FeatureEngineeringRequest, request: Reque
         fallback_specifications = []
         feature_engineering.apply_fallback_encoding(planning_engineered, req.target_column, fitted_steps=fallback_specifications)
         fallback_actions = [{key: step[key] for key in ("type", "column", "strategy")} for step in fallback_specifications]
+        check_feature_expansion(engineered_df, fallback_actions)
         engineered_df, fallback_steps = feature_engineering.apply_feature_engineering_plan(
             engineered_df, fallback_actions, req.target_column, fitted_steps=fitted_steps,
         )
@@ -1033,7 +1133,8 @@ def run_model_selection_agent(req: ModelSelectionRequest, request: Request):
     plays in the data-transforming agents."""
     owner_id = authenticated_user_id(request)
     df = require_owned_dataset(req.dataset_id, owner_id)
-    if ai_client is None:
+    use_ai = ai_settings(owner_id, req.dataset_id)["enabled"]
+    if use_ai and ai_client is None:
         raise HTTPException(
             status_code=503,
             detail="Model Selection Agent needs GROQ_API_KEY to be set on the server.",
@@ -1049,10 +1150,17 @@ def run_model_selection_agent(req: ModelSelectionRequest, request: Request):
             raise HTTPException(status_code=400, detail=str(e))
 
         # 2. REASON
-        prompt = model_selection.build_model_selection_prompt(profile)
+        safe_profile, aliases = provider_profile(profile, req.dataset_id, owner_id)
+        prompt = model_selection.build_model_selection_prompt(safe_profile)
         try:
-            result = generate_ai_text(prompt)
-            plan = model_selection.parse_plan(result)
+            if use_ai:
+                result = generate_ai_text(prompt, max_tokens=2500, owner_id=owner_id)
+                plan = restore_names(model_selection.parse_plan(result), aliases)
+            else:
+                names = ["logistic_regression", "random_forest_classifier", "gradient_boosting_classifier"] if profile["problem_type"] == "classification" else ["linear_regression", "ridge_regression", "random_forest_regressor"]
+                plan = {"summary": "Rule-based candidate shortlist. Validation scores will choose the winner.", "recommendations": [{"model": name, "rank": rank, "reasoning": "Fixed candidate for measured comparison."} for rank, name in enumerate(names, 1)]}
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Agent reasoning step failed: {e}")
 
@@ -1123,6 +1231,18 @@ def check_training_limits(df, candidates):
         raise HTTPException(status_code=413, detail="Training limit: 100k rows, 1k columns, 20m cells, 256 MB in memory.")
     if len(df) > 10000 and any(name in {"svm_classifier", "svm_regressor"} for name in candidates):
         raise HTTPException(status_code=413, detail="SVM training is limited to 10k rows; choose a tree or linear model.")
+
+
+def check_feature_expansion(df, actions):
+    projected = len(df.columns)
+    encoded = set()
+    for action in actions:
+        column = action.get("column")
+        if action.get("type") == "encode_categorical" and action.get("strategy") == "onehot" and column in df and column not in encoded:
+            projected += max(0, int(df[column].nunique()) - 1)
+            encoded.add(column)
+    if projected > 1000 or projected * len(df) > 20000000:
+        raise HTTPException(status_code=413, detail="Encoding would exceed the feature/cell limit. Use frequency encoding or fewer columns.")
 
 
 @app.post("/training-jobs")
@@ -1267,6 +1387,10 @@ def execute_model_training(req: ModelTrainingRequest, request: Request):
             "selection_scope": "validation",
             "final_test_metrics": result.get("final_test_metrics"),
             "baseline_test_metrics": result.get("baseline_test_metrics"),
+            "evaluation_data": result.get("evaluation_data"),
+            "target_column": req.target_column,
+            "test_size": req.test_size,
+            "workflow_id": workflow_id,
         },
     )
 
@@ -1317,7 +1441,8 @@ def run_evaluation_agent(req: EvaluationRequest, request: Request):
     owner_id = authenticated_user_id(request)
     df = require_owned_dataset(req.dataset_id, owner_id)
     source_id = owned_source_dataset(req.dataset_id, owner_id)
-    if ai_client is None:
+    use_ai = ai_settings(owner_id, req.dataset_id)["enabled"]
+    if use_ai and ai_client is None:
         raise HTTPException(
             status_code=503,
             detail="Evaluation Agent needs GROQ_API_KEY to be set on the server.",
@@ -1326,19 +1451,22 @@ def run_evaluation_agent(req: EvaluationRequest, request: Request):
     workflow_id = req.workflow_id or new_workflow_id()
 
     with Timer() as timer:
-        try:
-            eval_result = evaluation.evaluate_model(
-                df, req.target_column, req.model_name, test_size=req.test_size,
-                raw_df=DATASETS[source_id],
-                preprocessing_steps=DATASET_TRANSFORMS.get(req.dataset_id, []),
-            )
-        except evaluation.TrainingDataError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        training = get_pipeline_context(req.dataset_id).get("model_training", {})
+        eval_result = training.get("evaluation_data")
+        if not eval_result or training.get("best_model") != req.model_name or training.get("target_column") != req.target_column or training.get("test_size") != req.test_size or (req.workflow_id and training.get("workflow_id") != req.workflow_id):
+            raise HTTPException(status_code=409, detail="Train this run first. Evaluation only interprets its measured winning model.")
 
-        prompt = evaluation.build_evaluation_prompt(eval_result)
+        safe_result, aliases = provider_profile(eval_result, req.dataset_id, owner_id)
+        prompt = evaluation.build_evaluation_prompt(safe_result)
         try:
-            result = generate_ai_text(prompt)
-            plan = evaluation.parse_plan(result)
+            if use_ai:
+                result = generate_ai_text(prompt, max_tokens=1200, owner_id=owner_id)
+                plan = restore_names(evaluation.parse_plan(result), aliases)
+            else:
+                metric = eval_result["primary_metric"]
+                plan = {"verdict": evaluation._fallback_verdict(eval_result), "summary": f"Rule-based evaluation: measured final-test {metric} = {eval_result['test_metrics'][metric]}. Review diagnostics before deployment.", "observations": []}
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Agent reasoning step failed: {e}")
 

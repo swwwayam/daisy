@@ -48,6 +48,7 @@ from sklearn.metrics import (
     r2_score,
     recall_score,
     roc_auc_score,
+    confusion_matrix,
 )
 from sklearn.model_selection import train_test_split
 from sklearn.dummy import DummyClassifier, DummyRegressor
@@ -450,6 +451,7 @@ def train_and_evaluate(
 
     final_test_metrics = None
     baseline_metrics = None
+    evaluation_data = None
     if best_model:
         winner = estimators[best_model]
         predictions = winner.predict(X_test)
@@ -462,6 +464,18 @@ def train_and_evaluate(
             final_test_metrics = _regression_metrics(y_test, predictions)
             baseline = DummyRegressor(strategy="mean").fit(X_train, y_train)
             baseline_metrics = _regression_metrics(y_test, baseline.predict(X_test))
+        train_predictions = winner.predict(X_train)
+        train_metrics = _classification_metrics(y_train, train_predictions, None) if problem_type == "classification" else _regression_metrics(y_train, train_predictions)
+        evaluation_metric = "f1_weighted" if problem_type == "classification" else "r2"
+        evaluation_data = {"model": best_model, "problem_type": problem_type, "n_train": len(X_train), "n_test": len(X_test),
+                           "warnings": warnings, "train_metrics": train_metrics, "test_metrics": final_test_metrics,
+                           "primary_metric": evaluation_metric, "train_test_gap": round(train_metrics[evaluation_metric] - final_test_metrics[evaluation_metric], 4)}
+        if problem_type == "classification":
+            labels = sorted(pd.concat([y_train, y_test]).unique().tolist())
+            evaluation_data["confusion_matrix"] = {"labels": [str(label) for label in labels], "matrix": confusion_matrix(y_test, predictions, labels=labels).tolist()}
+        else:
+            residuals = np.asarray(y_test) - np.asarray(predictions)
+            evaluation_data["residuals"] = {"mean": round(float(residuals.mean()), 4), "std": round(float(residuals.std()), 4), "min": round(float(residuals.min()), 4), "max": round(float(residuals.max()), 4)}
 
     return {
         "problem_type": problem_type,
@@ -473,6 +487,7 @@ def train_and_evaluate(
         "split_strategy": schema["split_strategy"],
         "final_test_metrics": final_test_metrics,
         "baseline_test_metrics": baseline_metrics,
+        "evaluation_data": evaluation_data,
         "test_size": test_size,
         "random_state": random_state,
         "feature_columns": schema["feature_columns"],

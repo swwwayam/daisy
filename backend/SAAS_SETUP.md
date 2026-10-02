@@ -54,6 +54,9 @@ with identical environment settings. Do not start additional workers until host
 capacity has been planned. A cancelled job can leave a completed artifact from a
 race near publication; only the creator can access it, and retention cleanup must
 remove unreferenced artifacts.
+Use one API process for this version: dataset/context caches do not yet support
+fully coordinated writes across API replicas. Worker claims and budget reservations
+are atomic, and privacy settings are read from durable metadata before new calls.
 
 ## Score interpretation
 
@@ -63,7 +66,9 @@ full-dataset EDA remains descriptive. Learned preprocessing is refitted on the
 training fold. Candidate metrics are explicitly labeled validation scores. The
 winner alone receives a final test report alongside a majority-class or mean
 baseline. The exported estimator is the same fitted winner, not a new full-data
-refit. Evaluation reproduces that winner's split rather than selecting a new one.
+refit. The API's evaluation stage interprets diagnostics saved during the winner's
+single final-test scoring; it does not retrain or allow another candidate to probe
+the test fold. Older runs without these diagnostics require training again.
 
 The app fixes the test fraction at 20% so changing a fraction after inspecting
 data cannot move planning rows into the test set. Missing targets are excluded
@@ -72,3 +77,35 @@ and small test samples produce warnings. Random splitting assumes independent
 rows. Time series and repeated entities need time/group-aware splitting before
 deployment, and manual choices based on full EDA can still bias estimates. These
 scores are not statistical confidence guarantees.
+
+## AI privacy and budget controls
+
+The workspace exposes account and dataset AI switches. Account opt-out overrides
+dataset settings. When disabled, cleaning uses missing-cell median/mode rules,
+encoding uses training-only cardinality rules, model selection uses a fixed
+shortlist, and evaluation reports measured values using explicit thresholds. These
+results are labeled rule-based. Chat returns a disabled-service status instead of
+inventing a provider reply. Numerical training and model downloads remain available.
+
+Provider profiles replace original column names with stable aliases, omit category
+examples/previews, anonymize target class labels, and omit detailed statistics for
+likely identifier/contact fields and user-marked sensitive columns. Action columns
+are translated back before execution. Chat excludes historical narrative text and
+redacts recognizable email/phone patterns in messages. This is data minimization,
+not a guarantee of anonymization: other aggregate values and user-entered messages
+still go to Groq. Review sensitive columns and disable AI for confidential datasets.
+
+Budget reservations happen before requests: 100 calls and 200,000 total tokens per
+owner in a rolling 24 hour window. Actual provider-reported total tokens settle the
+reservation. Failures or responses without usage keep the conservative reservation;
+failed requests still consume a call. SQLite/Postgres budgets survive restart and
+use transactional reservations across workers. Memory-mode counters are demo-only.
+Contexts exceeding 32 KB are rejected before transmission. Agent output limits are
+bounded to 1,200 or 2,500 tokens; interactive chat is bounded to 512 tokens.
+
+Cloud retention automation, account data deletion/export, billing, and workspace
+sharing still need a separate implementation. Do not describe this runtime as a
+complete production SaaS merely because these controls are present.
+
+Design references: [Supabase private downloads](https://supabase.com/docs/guides/storage/serving/downloads)
+and [scikit-learn evaluation guidance](https://scikit-learn.org/stable/modules/cross_validation.html).

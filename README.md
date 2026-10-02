@@ -423,7 +423,11 @@ be hard-coded into the source code or committed to GitHub.
 
 Datasets, derived outputs, pipeline chat context, and model downloads are restricted
 to their authenticated owner. Model download ownership persists beside each ZIP;
-datasets and their ownership remain in memory and currently require one API worker.
+SQLite/Supabase modes persist datasets, model packages, lineage, and resumable runs.
+Durable modes run training in a separate worker with cancellation and quotas.
+Candidates use validation scores; only the winner is scored on the reserved test
+fold. Account/dataset controls can disable AI and limit provider inputs.
+See [SaaS runtime setup](backend/SAAS_SETUP.md) to enable these features.
 See [resource isolation and migration](backend/RESOURCE_ISOLATION.md) for guarantees,
 legacy model handling, and verification steps.
 

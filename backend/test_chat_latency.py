@@ -59,7 +59,8 @@ class ChatLatencyTests(unittest.TestCase):
             main.chat(main.ChatRequest(message="Explain my dataset", dataset_id="test"), self.request)
         prompt = client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
         self.assertIn("Rows: 2", prompt)
-        self.assertIn("Actual pipeline context", prompt)
+        self.assertIn("ACTUAL PIPELINE RESULTS", prompt)
+        self.assertIn("field_1", prompt)
 
     def test_greetings_use_provider_reply_without_fabricated_dataset_context(self):
         client = self.client()
