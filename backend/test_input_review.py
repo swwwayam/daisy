@@ -9,6 +9,15 @@ import main
 from input_review import InputReview, read_source
 from persistence import SQLiteStore
 from daisy_predict import normalize_input
+import io
+import subprocess
+import sys
+import zipfile
+import numpy as np
+import feature_engineering
+import model_export
+import model_training
+from daisy_predict import load_model, predict
 
 
 def test_literals_and_identifiers_are_preserved_until_review():
@@ -52,3 +61,27 @@ def test_invalid_reviews_do_not_silently_coerce_values():
         read_source(b"x\nNA\n", InputReview(column_types={"x": "numeric"}))
     with pytest.raises(ValueError, match="unknown columns"):
         read_source(b"x\n1\n", InputReview(column_tokens={"wrong": ["NA"]}))
+
+
+def test_downloaded_cli_preserves_literal_na_and_leading_zero_ids(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAISY_MODEL_DIR", str(tmp_path / "exports"))
+    raw, policy = read_source(("code,region,target\n" + "\n".join(
+        f"{['001','002'][i % 2]},{['NA','EU'][i % 3 == 0]},{100 * (i % 2) + 10 * (i % 3 == 0) + i * .001}" for i in range(100))).encode())
+    steps = [policy]
+    engineered, _ = feature_engineering.apply_feature_engineering_plan(raw, [
+        {"type": "encode_categorical", "column": "code", "strategy": "onehot"},
+        {"type": "encode_categorical", "column": "region", "strategy": "onehot"},
+    ], "target", fitted_steps=steps)
+    fitted, operations = {}, []
+    result = model_training.train_and_evaluate(engineered, "target", ["linear_regression"], raw_df=raw,
+                                                preprocessing_steps=steps, fitted_models=fitted, fitted_preprocessing=operations)
+    artifact = model_export.export_model(fitted[result["best_model"]], engineered, "target", operations, result, "data", "run", source_df=raw)
+    standalone = tmp_path / "standalone"
+    with zipfile.ZipFile(model_export.artifact_path(artifact["artifact_id"])) as archive:
+        archive.extractall(standalone)
+    new = pd.DataFrame({"code": ["001", "002"], "region": ["NA", "EU"]})
+    expected = predict(load_model(standalone / "model.joblib"), new)
+    new.to_csv(standalone / "new.csv", index=False)
+    completed = subprocess.run([sys.executable, "daisy_predict.py", "new.csv", "predictions.csv"], cwd=standalone, capture_output=True, text=True, timeout=45)
+    assert completed.returncode == 0, completed.stderr
+    np.testing.assert_allclose(pd.read_csv(standalone / "predictions.csv").prediction, expected)

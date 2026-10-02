@@ -73,6 +73,7 @@ from input_review import InputReview, read_source
 from training_config import TrainingConfig, configured_partitions
 from experiments import ExperimentRegistry, FinalizationConflict, public_record, timestamp
 from final_evaluation import load_owned_package, evaluate_saved_winner
+from decision_report import build_report
 from resource_access import ResourceOwners
 from persistence import build_store, PersistenceError, json_safe
 from job_queue import build_queue, QueueError
@@ -1481,6 +1482,7 @@ def execute_model_training(req: ModelTrainingRequest, request: Request):
         "dataset_id": req.dataset_id, "source_dataset_id": source_id, "target_column": req.target_column,
         "model_artifact": artifact, "training_result": result, "agent_record": record,
         "evaluation_state": evaluation_state,
+        "pipeline_context": get_pipeline_context(req.dataset_id),
     })
     save_pipeline_result(
         req.dataset_id,
@@ -1543,12 +1545,13 @@ def owned_experiment(identifier, owner):
 
 
 @app.get("/experiments")
-def list_experiments(request: Request):
-    rows = experiment_registry.list(resource_store, authenticated_user_id(request))
+def list_experiments(request: Request, limit: int = Query(20, ge=1, le=50), offset: int = Query(0, ge=0, le=100000)):
+    rows = experiment_registry.list(resource_store, authenticated_user_id(request), limit + 1, offset)
     return {"experiments": [{"experiment_id": row["id"], "created_at": row["metadata"]["created_at"],
                               "dataset_id": row["metadata"]["dataset_id"], "target_column": row["metadata"]["target_column"],
                               "best_model": row["metadata"]["training_result"]["best_model"],
-                              "primary_metric": row["metadata"]["training_result"]["primary_metric"]} for row in rows]}
+                              "primary_metric": row["metadata"]["training_result"]["primary_metric"]} for row in rows[:limit]],
+            "next_offset": offset + limit if len(rows) > limit else None, "durable": resource_store.enabled}
 
 
 @app.get("/experiments/{experiment_id}")
@@ -1597,6 +1600,16 @@ def download_final_report(experiment_id: str, request: Request):
         raise HTTPException(status_code=409, detail="Finalize this winner before downloading its final report.")
     return StreamingResponse(io.BytesIO(json.dumps(state["report"], indent=2, allow_nan=False).encode()),
                              media_type="application/json", headers={"Content-Disposition": f'attachment; filename="daisy-evaluation-{experiment_id}.json"'})
+
+
+@app.get("/experiments/{experiment_id}/model-card/download")
+def download_model_card(experiment_id: str, request: Request):
+    owner = authenticated_user_id(request)
+    experiment = owned_experiment(experiment_id, owner)
+    state = experiment_registry.finalization(resource_store, experiment["source_dataset_id"], owner)
+    final = state["report"] if state and state["experiment_id"] == experiment_id else None
+    return StreamingResponse(io.BytesIO(build_report(experiment, final)), media_type="application/zip",
+                             headers={"Content-Disposition": f'attachment; filename="daisy-report-{experiment_id}.zip"'})
 
 
 class EvaluationRequest(BaseModel):

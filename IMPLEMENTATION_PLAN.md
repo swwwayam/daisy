@@ -12,8 +12,8 @@ implementation and relevant checks pass; cloud verification is recorded separate
    the application cannot guarantee that a user has supplied genuinely unseen data.
 3. Implemented, local tests passed: append-only experiment records, owner-filtered
    retrieval independent of the current run, durable atomic holdout claims, restart
-   recovery, and a downloadable final diagnostics JSON report. Experiment history UI
-   and a human-readable decision report remain pending. Apply migration
+   recovery, paginated experiment history UI, and a downloadable final diagnostics
+   JSON report. Apply migration
    `202610030001_experiment_finalization.sql` before using Supabase persistence.
 4. Pending: bounded caches, endpoint/storage quotas, locked dependencies, containers,
    capacity/failure tests, worker monitoring, and operational probes.
@@ -22,8 +22,9 @@ implementation and relevant checks pass; cloud verification is recorded separate
    sharing requires explicit membership checks.
 6. Pending: benchmark runner comparing fixed baseline, rules, and AI with measured
    performance, runtime, failures, usage, and exported prediction equivalence.
-7. Partially implemented: downloadable final diagnostics JSON; pending human-readable
-   decision report/model card covering the full recorded pipeline.
+7. Implemented, local tests passed: downloadable final diagnostics JSON and a ZIP
+   containing a deterministic Markdown model card plus full recorded pipeline JSON,
+   candidate validation metrics, split/fold hashes, and final evaluation if measured.
 8. Pending: new-data prediction workspace, input diagnostics and model explanations.
 9. Pending: authenticated versioned prediction endpoints, usage limits, drift monitoring.
 10. Pending: live two-account Supabase checks and deployment verification; these must

@@ -165,8 +165,29 @@ export interface EvaluationResult extends AgentResult {
   };
 }
 
+export interface ExperimentSummary {
+  experiment_id: string; created_at: string; dataset_id: string;
+  target_column: string; best_model: string | null; primary_metric: string;
+}
+export interface ExperimentRecord extends Omit<ExperimentSummary, "best_model" | "primary_metric"> {
+  agent_record: TrainingResult;
+  training_result: Dict;
+  final_evaluation: Dict | null;
+}
+
 /* ─── Endpoints ─── */
 export const daisy = {
+  async experiments(offset = 0): Promise<{ experiments: ExperimentSummary[]; next_offset: number | null; durable: boolean }> {
+    return json(await fetch(`${BASE_URL}/experiments?offset=${offset}`, { headers: await authHeaders() }));
+  },
+  async experiment(id: string): Promise<ExperimentRecord> {
+    return json(await fetch(`${BASE_URL}/experiments/${encodeURIComponent(id)}`, { headers: await authHeaders() }));
+  },
+  async downloadModelCard(id: string): Promise<Blob> {
+    const res = await fetch(`${BASE_URL}/experiments/${encodeURIComponent(id)}/model-card/download`, { headers: await authHeaders() });
+    if (!res.ok) throw new DaisyApiError(await readError(res), res.status);
+    return res.blob();
+  },
   async aiSettings(datasetId: string | null): Promise<{ enabled: boolean; account_enabled: boolean; dataset_enabled: boolean; sensitive_columns: string[]; disclosure: string }> {
     return json(await fetch(`${BASE_URL}/ai-settings${datasetId ? `?dataset_id=${encodeURIComponent(datasetId)}` : ""}`, { headers: await authHeaders() }));
   },

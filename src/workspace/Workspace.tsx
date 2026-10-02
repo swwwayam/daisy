@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { daisy, type Dict, type TrainingResult } from "../services/daisy";
+import { daisy, type Dict, type TrainingResult, type ExperimentRecord, type ExperimentSummary } from "../services/daisy";
 import { parseModels, STAGES, type StageId, type StageStatus, useDaisyRun } from "./useDaisyRun";
 import { InputReviewPanel } from "./InputReviewPanel";
 import {
@@ -422,6 +422,7 @@ function TrainingPanel({ run }: { run: Run }) {
               <div className="model-card-head">
                 <span className="model-name">{p.name}{p.name === best && <span className="crown">★</span>}</span>
               </div>
+              {p.raw.metrics != null && <MetricGrid metrics={p.raw.metrics as Dict} />}
               {Object.entries(p.raw).filter(([k, v]) => isScalar(v) && !["model", "model_name", "name"].includes(k)).map(([k, v]) => (
                 <div className="model-line" key={k}><span>{humanize(k)}</span><span>{formatValue(v)}</span></div>
               ))}
@@ -502,17 +503,17 @@ function ModelDownload({ training }: { training: TrainingResult | null }) {
   </div>;
 }
 
-function FinalReportDownload({ experimentId }: { experimentId: string }) {
+function FinalReportDownload({ experimentId, modelCard = false }: { experimentId: string; modelCard?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function download() {
     setBusy(true);
     setError(null);
     try {
-      const url = URL.createObjectURL(await daisy.downloadReport(experimentId));
+      const url = URL.createObjectURL(await (modelCard ? daisy.downloadModelCard(experimentId) : daisy.downloadReport(experimentId)));
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `daisy-evaluation-${experimentId}.json`;
+      anchor.download = modelCard ? `daisy-report-${experimentId}.zip` : `daisy-evaluation-${experimentId}.json`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
@@ -522,7 +523,7 @@ function FinalReportDownload({ experimentId }: { experimentId: string }) {
     } finally { setBusy(false); }
   }
   return <div className="model-download">
-    <button className="pill" onClick={download} disabled={busy}>{busy ? "Preparing report…" : "Download final evaluation ↓"}</button>
+    <button className="pill" onClick={download} disabled={busy}>{busy ? "Preparing report…" : modelCard ? "Download model card and decision report ↓" : "Download final evaluation ↓"}</button>
     {error && <p role="alert">{error}</p>}
   </div>;
 }
@@ -546,6 +547,7 @@ function ResultsPanel({ run }: { run: Run }) {
       )}
 
       <ModelDownload training={t} />
+      {t?.output_summary?.experiment_id && <FinalReportDownload experimentId={t.output_summary.experiment_id} modelCard />}
 
       {st !== "done" && st !== "running" && (
         <ReadyState title="Finalize this winner" desc="Measure this saved model on the reserved test fold and compare it with a simple baseline. This fixes the final winner for this source dataset; further model selection needs new unseen data. Retrying this winner returns its saved scores." action="Finalize and evaluate" onRun={run.runEvaluation} />
@@ -892,6 +894,7 @@ export default function Workspace({ onExit, onSignOut }: { onExit: () => void; o
         <p role="status" aria-live="polite">{run.historyLoading ? "Loading saved runs…" : run.historyError ? `Run history: ${run.historyError}` : run.historyDurable === false ? "Runs last for this session. Saved history requires durable storage." : run.historyDurable === true && !run.savedRuns.length ? "No saved runs on this page. Upload a dataset or refresh to see your latest runs." : run.savedRuns.length ? `Showing runs ${run.historyOffset + 1}–${run.historyOffset + run.savedRuns.length}` : ""}</p>
         </div>
         <AIPrivacyControls run={run} />
+        <ExperimentHistory latest={run.state.training?.output_summary?.experiment_id} />
       </div>
 
       <PipelineRail status={run.state.status} active={displayed} onPick={goto} />
@@ -916,4 +919,69 @@ export default function Workspace({ onExit, onSignOut }: { onExit: () => void; o
       <ChatDock run={run} />
     </div>
   );
+}
+
+function ExperimentHistory({ latest }: { latest?: string }) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<ExperimentSummary[]>([]);
+  const [offset, setOffset] = useState(0);
+  const [next, setNext] = useState<number | null>(null);
+  const [refresh, setRefresh] = useState(0);
+  const [selected, setSelected] = useState("");
+  const [record, setRecord] = useState<ExperimentRecord | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [recordLoading, setRecordLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [durable, setDurable] = useState(true);
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    setLoading(true); setError("");
+    daisy.experiments(offset).then(result => {
+      if (active) { setRows(result.experiments); setNext(result.next_offset); setDurable(result.durable); }
+    }).catch(err => { if (active) setError(err.message); }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [open, offset, refresh, latest]);
+  useEffect(() => {
+    if (!selected || !open) { setRecord(null); return; }
+    let active = true;
+    setRecord(null); setRecordLoading(true); setError("");
+    daisy.experiment(selected).then(result => { if (active) setRecord(result); })
+      .catch(err => { if (active) setError(err.message); }).finally(() => { if (active) setRecordLoading(false); });
+    return () => { active = false; };
+  }, [selected, open, refresh]);
+  return <details className="experiment-history report-block" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary>Experiment history</summary>
+    <p>Inspect each training attempt independently. Opening a record keeps your active run in place.</p>
+    {open && <>
+      <label>Saved attempt <select className="pill" value={selected} disabled={loading} onChange={event => setSelected(event.target.value)}>
+        <option value="">Choose an experiment</option>
+        {rows.map(row => <option key={row.experiment_id} value={row.experiment_id}>{row.best_model || "No winner"} · {row.target_column} · {row.experiment_id.slice(0, 8)} · {new Date(row.created_at).toLocaleString()}</option>)}
+      </select></label>
+      <div className="saved-history-actions">
+        {offset > 0 && <button className="pill" disabled={loading} onClick={() => { setSelected(""); setOffset(Math.max(0, offset - 20)); }}>Newer</button>}
+        {next !== null && <button className="pill" disabled={loading} onClick={() => { setSelected(""); setOffset(next); }}>Older</button>}
+        <button className="pill" disabled={loading || recordLoading} onClick={() => setRefresh(value => value + 1)}>Refresh experiments</button>
+      </div>
+      {loading || recordLoading ? <p role="status">Loading experiments…</p> : !rows.length && <p>No experiments on this page.</p>}
+      {!durable && <p>Demo mode: experiments last until the backend restarts.</p>}
+      {error && <p role="alert">{error}</p>}
+      {record && <div className="experiment-detail">
+        <p className="mono">Experiment {record.experiment_id}</p>
+        <p>{record.agent_record.reasoning}</p>
+        <h4>Candidate validation scores</h4>
+        {(record.agent_record.actions ?? []).map((candidate, index) => <div className="report-block" key={index}>
+          <h5>{String(candidate.model)} · {String(candidate.status)}</h5>
+          <MetricGrid metrics={(candidate.metrics ?? {}) as Dict} />
+          {typeof candidate.message === "string" && <p>{candidate.message}</p>}
+        </div>)}
+        <ModelDownload training={record.agent_record} />
+        <FinalReportDownload experimentId={record.experiment_id} modelCard />
+        {record.final_evaluation ? <>
+          <h4>Saved final test scores</h4><MetricGrid metrics={record.final_evaluation.test_metrics as Dict} />
+          <FinalReportDownload experimentId={record.experiment_id} />
+        </> : <p>This attempt has no final-test report. Validation scores do not establish final performance.</p>}
+      </div>}
+    </>}
+  </details>;
 }

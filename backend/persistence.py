@@ -113,6 +113,20 @@ class SQLiteStore:
         with self.connect() as db:
             db.execute("INSERT INTO resources(id,owner,kind,metadata) VALUES(?,?,?,?)", (identifier, owner, "experiment", json.dumps(metadata, allow_nan=False)))
 
+    def list_experiments(self, owner, limit, offset):
+        # Project compact fields in the database instead of loading fold IDs,
+        # full candidate/per-class metrics, previews or pipeline context.
+        with self.connect() as db:
+            rows = db.execute("""SELECT id,updated_at,json_object(
+                'created_at',json_extract(metadata,'$.created_at'),
+                'dataset_id',json_extract(metadata,'$.dataset_id'),
+                'target_column',json_extract(metadata,'$.target_column'),
+                'training_result',json_object('best_model',json_extract(metadata,'$.training_result.best_model'),
+                    'primary_metric',json_extract(metadata,'$.training_result.primary_metric'))
+                ) AS summary FROM resources WHERE owner=? AND kind='experiment'
+                ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?""", (owner, limit, offset)).fetchall()
+        return [{"id": row["id"], "updated_at": row["updated_at"], "metadata": json.loads(row["summary"])} for row in rows]
+
     def finalization(self, source, owner):
         with self.connect() as db:
             row = db.execute("SELECT experiment_id,report FROM finalizations WHERE source=? AND owner=?", (source, owner)).fetchone()
@@ -220,6 +234,16 @@ class SupabaseStore:
 
     def insert_experiment(self, identifier, owner, metadata):
         self.request("POST", "/rest/v1/daisy_resources", json={"id": identifier, "owner_id": owner, "kind": "experiment", "metadata": metadata})
+
+    def list_experiments(self, owner, limit, offset):
+        rows = self.request("GET", "/rest/v1/daisy_resources", params={
+            "owner_id": f"eq.{owner}", "kind": "eq.experiment",
+            "select": "id,updated_at,created_at:metadata->>created_at,dataset_id:metadata->>dataset_id,target_column:metadata->>target_column,best_model:metadata->training_result->>best_model,primary_metric:metadata->training_result->>primary_metric",
+            "order": "updated_at.desc,id.desc", "limit": str(limit), "offset": str(offset),
+        }).json()
+        return [{"id": row["id"], "updated_at": row["updated_at"], "metadata": {"created_at": row["created_at"],
+                 "dataset_id": row["dataset_id"], "target_column": row["target_column"],
+                 "training_result": {"best_model": row["best_model"], "primary_metric": row["primary_metric"]}}} for row in rows]
 
     def finalization(self, source, owner):
         rows = self.request("GET", "/rest/v1/daisy_finalizations", params={"source_id": f"eq.{source}", "owner_id": f"eq.{owner}", "select": "experiment_id,report"}).json()

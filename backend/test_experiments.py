@@ -1,4 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
+import io
+import json
+import zipfile
 from unittest.mock import AsyncMock, patch
 
 import numpy as np
@@ -98,10 +101,15 @@ def test_independent_attempts_finalize_exact_export_restart_and_auth(tmp_path, m
             return result["experiment_id"]
         first, second = train("linear_regression"), train("ridge_regression")
         assert first != second
+        preview_card = client.get(f"/experiments/{first}/model-card/download", headers=a)
+        with zipfile.ZipFile(io.BytesIO(preview_card.content)) as archive:
+            assert "Not measured" in archive.read("model_card.md").decode()
+            assert json.loads(archive.read("report.json"))["assessment"] == "validation_only"
+        assert client.get(f"/experiments/{first}/model-card/download", headers=b).status_code == 404
         assert client.get(f"/experiments/{first}", headers=a).json()["training_result"]["best_model"] == "linear_regression"
         assert client.get(f"/experiments/{first}", headers=b).status_code == 404
         assert client.post(f"/experiments/{first}/finalize", headers=b).status_code == 404
-        assert client.get("/experiments", headers=b).json() == {"experiments": []}
+        assert client.get("/experiments", headers=b).json()["experiments"] == []
         # Clear caches to require restoration of datasets, ownership and records.
         with patch.dict(main.DATASETS, {}, clear=True), patch.object(main, "experiment_registry", ExperimentRegistry()):
             final = client.post(f"/experiments/{first}/finalize", headers=a)
@@ -117,3 +125,23 @@ def test_independent_attempts_finalize_exact_export_restart_and_auth(tmp_path, m
             assert client.get(f"/experiments/{first}/report/download", headers=b).status_code == 404
             assert client.get(f"/experiments/{first}", headers=a).json()["final_evaluation"] == measured
             assert "evaluation_state" not in client.get(f"/experiments/{first}", headers=a).json()
+            card = client.get(f"/experiments/{first}/model-card/download", headers=a)
+            with zipfile.ZipFile(io.BytesIO(card.content)) as archive:
+                assert json.loads(archive.read("report.json"))["final_evaluation"] == measured
+                assert "Simple baseline" in archive.read("model_card.md").decode()
+
+
+def test_history_is_compact_paginated_and_private(tmp_path):
+    store = SQLiteStore(tmp_path / "state.db")
+    registry = ExperimentRegistry()
+    for number in range(23):
+        registry.create(store, str(number), "a", {"created_at": str(number), "dataset_id": "dataset", "target_column": "target",
+                                               "training_result": {"best_model": "ridge", "primary_metric": "mae"},
+                                               "evaluation_state": {"train_row_ids": list(range(10000))}})
+    first = registry.list(store, "a", 20, 0)
+    second = registry.list(store, "a", 20, 20)
+    assert len(first) == 20 and len(second) == 3
+    assert not {row["id"] for row in first} & {row["id"] for row in second}
+    assert "evaluation_state" not in json.dumps(first)
+    assert len(json.dumps(first)) < 7000
+    assert registry.list(store, "b", 20, 0) == []

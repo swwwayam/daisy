@@ -38,12 +38,12 @@ class ExperimentRegistry:
             saved = self.records.get(identifier)
             return json.loads(json.dumps(saved[1])) if saved and saved[0] == owner else None
 
-    def list(self, store, owner):
+    def list(self, store, owner, limit=20, offset=0):
         if store.enabled:
-            return store.list(owner, "experiment")
+            return store.list_experiments(owner, limit, offset)
         with self.lock:
             return [{"id": key, "metadata": value, "updated_at": value["created_at"]}
-                    for key, (creator, value) in reversed(list(self.records.items())) if creator == owner][:30]
+                    for key, (creator, value) in reversed(list(self.records.items())) if creator == owner][offset:offset + limit]
 
     def finalization(self, store, source, owner):
         if store.enabled:
