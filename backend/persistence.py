@@ -30,6 +30,33 @@ def json_safe(value):
     return str(value)
 
 
+RUN_STAGES = ("dataset", "cleaning", "eda", "target", "feature", "selection", "training", "results")
+RUN_STATUSES = {"idle", "available", "running", "done", "error", "waiting"}
+
+
+def run_summary(row):
+    """History never contains chat, previews, or full agent reports."""
+    status = row.get("status") or {}
+    if isinstance(status, str):
+        try:
+            status = json.loads(status)
+        except ValueError:
+            status = {}
+    if not isinstance(status, dict):
+        status = {}
+    def text_field(key):
+        value = row.get(key)
+        return value[:512] if isinstance(value, str) else None
+    def count_field(key):
+        value = row.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+    return {"id": row["id"], "updated_at": row["updated_at"], "metadata": {
+        "upload": {"filename": text_field("filename"), "rows": count_field("rows"), "columns": count_field("columns")},
+        "targetColumn": text_field("target"), "bestModel": text_field("model"),
+        "status": {key: status[key] for key in RUN_STAGES if isinstance(status.get(key), str) and status[key] in RUN_STATUSES},
+    }}
+
+
 class MemoryStore:
     enabled = False
 
@@ -45,6 +72,9 @@ class MemoryStore:
     def metadata(self, identifier, owner, kind):
         return None
 
+    def list_runs(self, owner, limit, offset):
+        return []
+
 
 class SQLiteStore:
     """Development persistence with the same owner boundary as the cloud store."""
@@ -55,6 +85,7 @@ class SQLiteStore:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.execute("CREATE TABLE IF NOT EXISTS resources (id TEXT PRIMARY KEY, owner TEXT NOT NULL, kind TEXT NOT NULL, metadata TEXT NOT NULL, blob BLOB, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+            db.execute("CREATE INDEX IF NOT EXISTS resources_owner_kind_updated ON resources(owner,kind,updated_at DESC,id DESC)")
 
     @contextmanager
     def connect(self):
@@ -89,6 +120,19 @@ class SQLiteStore:
         with self.connect() as db:
             row = db.execute("SELECT metadata FROM resources WHERE id=? AND owner=? AND kind=?", (identifier, owner, kind)).fetchone()
         return json.loads(row["metadata"]) if row else None
+
+    def list_runs(self, owner, limit, offset):
+        with self.connect() as db:
+            rows = db.execute("""SELECT id,updated_at,
+                json_extract(metadata,'$.upload.filename') AS filename,
+                json_extract(metadata,'$.upload.rows') AS rows,
+                json_extract(metadata,'$.upload.columns') AS columns,
+                json_extract(metadata,'$.targetColumn') AS target,
+                json_extract(metadata,'$.bestModel') AS model,
+                json_extract(metadata,'$.status') AS status
+                FROM resources WHERE owner=? AND kind='run'
+                ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?""", (owner, limit, offset)).fetchall()
+        return [run_summary(dict(row)) for row in rows]
 
 
 class SupabaseStore:
@@ -160,6 +204,15 @@ class SupabaseStore:
     def metadata(self, identifier, owner, kind):
         rows = self.request("GET", "/rest/v1/daisy_resources", params={**self.filters(identifier, owner, kind), "select": "metadata"}).json()
         return rows[0]["metadata"] if rows else None
+
+    def list_runs(self, owner, limit, offset):
+        # Project JSON fields in Postgres: full snapshots never cross the history boundary.
+        fields = "id,updated_at,filename:metadata->upload->>filename,rows:metadata->upload->rows,columns:metadata->upload->columns,target:metadata->>targetColumn,model:metadata->>bestModel,status:metadata->status"
+        rows = self.request("GET", "/rest/v1/daisy_resources", params={
+            "owner_id": f"eq.{owner}", "kind": "eq.run", "select": fields,
+            "order": "updated_at.desc,id.desc", "limit": str(limit), "offset": str(offset),
+        }).json()
+        return [run_summary(row) for row in rows]
 
 
 def build_store():

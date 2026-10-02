@@ -48,7 +48,7 @@ import pandas as pd
 import numpy as np
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from openai import (
@@ -701,8 +701,10 @@ class RunSnapshotRequest(BaseModel):
 
 
 @app.get("/runs")
-def list_saved_runs(request: Request):
-    return {"runs": resource_store.list(authenticated_user_id(request), "run"), "durable": resource_store.enabled}
+def list_saved_runs(request: Request, limit: int = Query(20, ge=1, le=50), offset: int = Query(0, ge=0, le=100000)):
+    rows = resource_store.list_runs(authenticated_user_id(request), limit + 1, offset)
+    return {"runs": rows[:limit], "durable": resource_store.enabled,
+            "next_offset": offset + limit if len(rows) > limit else None}
 
 
 @app.put("/runs/{run_id}")
