@@ -131,6 +131,7 @@ def export_model(estimator, df, target_column, steps, training_result, dataset_i
     }
     identifier = str(uuid.uuid4())
     metadata = {"format_version": 1, "artifact_id": identifier,
+                "experiment_id": training_result.get("experiment_id"),
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "model": training_result["best_model"], "target_column": target_column,
                 "problem_type": training_result["problem_type"], "primary_metric": training_result["primary_metric"],
@@ -152,8 +153,8 @@ def export_model(estimator, df, target_column, steps, training_result, dataset_i
                 "model_parameters": model_parameters,
                 "input_columns": input_columns, "feature_columns": features,
                 "preprocessing_steps": [{k: s[k] for k in ("type", "column", "strategy") if k in s} for s in steps],
-                "limitations": ["Candidates are compared on validation scores; only the winner is scored on the final test fold.",
-                    "Random splits assume independent rows; temporal and grouped datasets need a different split strategy.",
+                "limitations": ["Candidates are compared on validation scores. Null final-test metrics mean this package has not been finalized.",
+                    "The split strategy must match the deployment setting; random splits assume independent rows.",
                     "Estimator is the exact train-split model scored in training, not a refit on all rows.",
                     "Inference preserves row count. Training-only row removal and target transforms are not replayed.",
                     "Unseen categories: one-hot -> all zeros; label -> -1; frequency -> 0.",
@@ -185,7 +186,7 @@ Python usage:
 
     import pandas as pd
     from daisy_predict import load_model, predict
-    predictions = predict(load_model(), pd.read_csv("new_data.csv"))
+    predictions = predict(load_model(), pd.read_csv("new_data.csv", dtype=str, keep_default_na=False))
 
 model.joblib is a dictionary with estimator, preprocessing, feature_columns,
 input_columns, and target_column. Use the helper to apply saved preprocessing;
@@ -196,8 +197,10 @@ calling the estimator directly requires already-transformed features in saved or
 This is the exact estimator scored during training, not a newly refitted model.
 DAISY reserved train/validation/test folds before fitting imputation, scaling, and encoding;
 the held-out rows did not influence those learned preprocessing values.
-Candidate scores in metadata are validation scores. Only the selected winner has a
-final test score, alongside a simple baseline. Random splits assume independent rows.
+Candidate scores in metadata are validation scores. Null final-test metrics mean
+final evaluation has not run. DAISY finalization produces a separate report with
+the winner's test scores and a simple baseline; this package remains immutable.
+The split strategy is recorded in metadata. Random splits assume independent rows.
 Training-only duplicate/outlier/target-missing row removal is not applied at inference.
 Target values reflect any cleaning performed on the target during the training run.
 Unseen categories map to zero one-hot columns, -1 labels, or zero frequency.

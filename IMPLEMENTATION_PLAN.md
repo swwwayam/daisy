@@ -5,9 +5,16 @@ implementation and relevant checks pass; cloud verification is recorded separate
 
 1. Implemented, local tests passed: preserve source CSV and add an explicit interpretation review
    (missing tokens, data types, original-data download, recorded inference policy).
-2. Pending: user-confirmed task type, appropriate random/stratified/group/time splits,
-   selectable metrics, protected final evaluation, and a larger model catalog.
-3. Pending: immutable experiment records and independent result restoration.
+2. Implemented, local tests passed: user-confirmed task type, random/stratified/group/time
+   splits, selectable metrics, 27 portable estimators, and explicit final evaluation.
+   Finalization fixes one winning experiment per uploaded source and prevents later
+   training/review on that source. Re-uploading a dataset creates a new source, so
+   the application cannot guarantee that a user has supplied genuinely unseen data.
+3. Implemented, local tests passed: append-only experiment records, owner-filtered
+   retrieval independent of the current run, durable atomic holdout claims, restart
+   recovery, and a downloadable final diagnostics JSON report. Experiment history UI
+   and a human-readable decision report remain pending. Apply migration
+   `202610030001_experiment_finalization.sql` before using Supabase persistence.
 4. Pending: bounded caches, endpoint/storage quotas, locked dependencies, containers,
    capacity/failure tests, worker monitoring, and operational probes.
 5. Pending: deletion, retention, account export, usage display, and billing integration
@@ -15,7 +22,8 @@ implementation and relevant checks pass; cloud verification is recorded separate
    sharing requires explicit membership checks.
 6. Pending: benchmark runner comparing fixed baseline, rules, and AI with measured
    performance, runtime, failures, usage, and exported prediction equivalence.
-7. Pending: auditable downloadable decision report/model card.
+7. Partially implemented: downloadable final diagnostics JSON; pending human-readable
+   decision report/model card covering the full recorded pipeline.
 8. Pending: new-data prediction workspace, input diagnostics and model explanations.
 9. Pending: authenticated versioned prediction endpoints, usage limits, drift monitoring.
 10. Pending: live two-account Supabase checks and deployment verification; these must

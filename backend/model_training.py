@@ -281,7 +281,7 @@ def _classification_metrics(y_true, y_pred, y_proba) -> dict:
         "per_class": {key: value for key, value in classification_report(y_true, y_pred, output_dict=True, zero_division=0).items() if key not in {"accuracy", "macro avg", "weighted avg"}},
     }
     # ROC-AUC only well-defined for binary classification with predicted probabilities
-    if y_proba is not None and len(set(y_true)) == 2:
+    if y_proba is not None and y_proba.shape[1] == 2 and len(set(y_true)) == 2:
         try:
             metrics["roc_auc"] = round(float(roc_auc_score(y_true, y_proba[:, 1])), 4)
         except Exception:
@@ -296,6 +296,34 @@ def _regression_metrics(y_true, y_pred) -> dict:
         "rmse": round(float(np.sqrt(mse)), 4),
         "r2": round(float(r2_score(y_true, y_pred)), 4),
     }
+
+
+def score_final_model(winner, model_name, problem_type, X_train, X_test, y_train, y_test, warnings):
+    """Score an already fitted estimator; never refit the chosen winner."""
+    predictions = winner.predict(X_test)
+    if problem_type == "classification":
+        probabilities = winner.predict_proba(X_test) if hasattr(winner, "predict_proba") else None
+        test_metrics = _classification_metrics(y_test, predictions, probabilities)
+        baseline = DummyClassifier(strategy="most_frequent").fit(X_train, y_train)
+        baseline_metrics = _classification_metrics(y_test, baseline.predict(X_test), None)
+    else:
+        test_metrics = _regression_metrics(y_test, predictions)
+        baseline = DummyRegressor(strategy="mean").fit(X_train, y_train)
+        baseline_metrics = _regression_metrics(y_test, baseline.predict(X_test))
+    train_predictions = winner.predict(X_train)
+    train_metrics = _classification_metrics(y_train, train_predictions, None) if problem_type == "classification" else _regression_metrics(y_train, train_predictions)
+    metric = "f1_weighted" if problem_type == "classification" else "r2"
+    report = {"model": model_name, "problem_type": problem_type, "n_train": len(X_train), "n_test": len(X_test),
+              "warnings": warnings, "train_metrics": train_metrics, "test_metrics": test_metrics,
+              "baseline_test_metrics": baseline_metrics, "primary_metric": metric,
+              "train_test_gap": round(train_metrics[metric] - test_metrics[metric], 4)}
+    if problem_type == "classification":
+        labels = sorted(pd.concat([y_train, y_test]).unique().tolist())
+        report["confusion_matrix"] = {"labels": [str(label) for label in labels], "matrix": confusion_matrix(y_test, predictions, labels=labels).tolist()}
+    else:
+        residuals = np.asarray(y_test) - np.asarray(predictions)
+        report["residuals"] = {"mean": round(float(residuals.mean()), 4), "std": round(float(residuals.std()), 4), "min": round(float(residuals.min()), 4), "max": round(float(residuals.max()), 4)}
+    return report
 
 
 def reserved_partitions(source, test_size=0.2, random_state=42, configuration=None):
@@ -376,6 +404,8 @@ def train_and_evaluate(
     preprocessing_steps: list[dict] | None = None,
     fitted_preprocessing: list | None = None,
     configuration: dict | None = None,
+    finalize_test: bool = True,
+    evaluation_state: dict | None = None,
 ) -> dict:
     """The 'act' step. Real fit/predict for every candidate. Each model's
     failure is isolated — reported, not fatal to the whole run."""
@@ -415,6 +445,14 @@ def train_and_evaluate(
     if fitted_preprocessing is not None:
         fitted_preprocessing.extend(fitted_steps)
 
+    primary_metric = configuration.get("primary_metric", "auto") if configuration else "auto"
+    if primary_metric == "auto": primary_metric = PRIMARY_METRIC[problem_type]
+    allowed_metrics = {"f1_weighted", "f1_macro", "accuracy", "balanced_accuracy"} if problem_type == "classification" else {"rmse", "mae", "r2"}
+    if primary_metric not in allowed_metrics:
+        raise TrainingDataError("Selected metric does not match the detected task type. Choose the task explicitly during review.")
+    if evaluation_state is not None:
+        evaluation_state.update(train_row_ids=X_train.index.tolist(), test_row_ids=X_test.index.tolist())
+
     results = []
     estimators = {}
     for model_name in candidate_models:
@@ -443,11 +481,6 @@ def train_and_evaluate(
         entry["training_time_seconds"] = round(time.time() - start, 4)
         results.append(entry)
 
-    primary_metric = configuration.get("primary_metric", "auto") if configuration else "auto"
-    if primary_metric == "auto": primary_metric = PRIMARY_METRIC[problem_type]
-    allowed_metrics = {"f1_weighted", "f1_macro", "accuracy", "balanced_accuracy"} if problem_type == "classification" else {"rmse", "mae", "r2"}
-    if primary_metric not in allowed_metrics:
-        raise TrainingDataError("Selected metric does not match the detected task type. Choose the task explicitly during review.")
     higher_is_better = primary_metric not in {"rmse", "mae"}
     successful = [r for r in results if r["status"] == "success" and primary_metric in r["metrics"]]
 
@@ -461,30 +494,10 @@ def train_and_evaluate(
     final_test_metrics = None
     baseline_metrics = None
     evaluation_data = None
-    if best_model:
-        winner = estimators[best_model]
-        predictions = winner.predict(X_test)
-        if problem_type == "classification":
-            probabilities = winner.predict_proba(X_test) if hasattr(winner, "predict_proba") else None
-            final_test_metrics = _classification_metrics(y_test, predictions, probabilities)
-            baseline = DummyClassifier(strategy="most_frequent").fit(X_train, y_train)
-            baseline_metrics = _classification_metrics(y_test, baseline.predict(X_test), None)
-        else:
-            final_test_metrics = _regression_metrics(y_test, predictions)
-            baseline = DummyRegressor(strategy="mean").fit(X_train, y_train)
-            baseline_metrics = _regression_metrics(y_test, baseline.predict(X_test))
-        train_predictions = winner.predict(X_train)
-        train_metrics = _classification_metrics(y_train, train_predictions, None) if problem_type == "classification" else _regression_metrics(y_train, train_predictions)
-        evaluation_metric = "f1_weighted" if problem_type == "classification" else "r2"
-        evaluation_data = {"model": best_model, "problem_type": problem_type, "n_train": len(X_train), "n_test": len(X_test),
-                           "warnings": warnings, "train_metrics": train_metrics, "test_metrics": final_test_metrics,
-                           "primary_metric": evaluation_metric, "train_test_gap": round(train_metrics[evaluation_metric] - final_test_metrics[evaluation_metric], 4)}
-        if problem_type == "classification":
-            labels = sorted(pd.concat([y_train, y_test]).unique().tolist())
-            evaluation_data["confusion_matrix"] = {"labels": [str(label) for label in labels], "matrix": confusion_matrix(y_test, predictions, labels=labels).tolist()}
-        else:
-            residuals = np.asarray(y_test) - np.asarray(predictions)
-            evaluation_data["residuals"] = {"mean": round(float(residuals.mean()), 4), "std": round(float(residuals.std()), 4), "min": round(float(residuals.min()), 4), "max": round(float(residuals.max()), 4)}
+    if best_model and finalize_test:
+        evaluation_data = score_final_model(estimators[best_model], best_model, problem_type, X_train, X_test, y_train, y_test, warnings)
+        final_test_metrics = evaluation_data["test_metrics"]
+        baseline_metrics = evaluation_data["baseline_test_metrics"]
 
     return {
         "problem_type": problem_type,

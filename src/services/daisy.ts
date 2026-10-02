@@ -137,6 +137,7 @@ export interface ModelSelectionResult extends AgentResult {
 
 export interface TrainingResult extends AgentResult {
   output_summary?: {
+    experiment_id?: string;
     problem_type?: string; primary_metric?: string; best_model?: string | null;
     model_artifact?: { artifact_id: string; filename: string; model: string; input_columns: string[] } | null;
     export_error?: string | null;
@@ -151,6 +152,8 @@ export interface TrainingResult extends AgentResult {
 
 export interface EvaluationResult extends AgentResult {
   output_summary?: {
+    experiment_id?: string | null;
+    baseline_test_metrics?: Dict | null;
     verdict?: "good" | "moderate" | "poor";
     verdict_corrected_by_guardrail?: boolean;
     observations?: string[];
@@ -285,6 +288,7 @@ export const daisy = {
     modelName: string;
     testSize: number;
     workflowId: string | null;
+    experimentId?: string;
   }): Promise<EvaluationResult> {
     return postJson("/agents/evaluation", {
       dataset_id: args.datasetId,
@@ -292,6 +296,7 @@ export const daisy = {
       model_name: args.modelName,
       test_size: args.testSize,
       workflow_id: args.workflowId,
+      experiment_id: args.experimentId,
     });
   },
 
@@ -307,6 +312,12 @@ export const daisy = {
 
   async downloadModel(artifactId: string): Promise<Blob> {
     const res = await fetch(`${BASE_URL}/models/${encodeURIComponent(artifactId)}/download`, { headers: await authHeaders() });
+    if (!res.ok) throw new DaisyApiError(await readError(res), res.status);
+    return res.blob();
+  },
+
+  async downloadReport(experimentId: string): Promise<Blob> {
+    const res = await fetch(`${BASE_URL}/experiments/${encodeURIComponent(experimentId)}/report/download`, { headers: await authHeaders() });
     if (!res.ok) throw new DaisyApiError(await readError(res), res.status);
     return res.blob();
   },

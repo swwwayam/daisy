@@ -502,6 +502,31 @@ function ModelDownload({ training }: { training: TrainingResult | null }) {
   </div>;
 }
 
+function FinalReportDownload({ experimentId }: { experimentId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function download() {
+    setBusy(true);
+    setError(null);
+    try {
+      const url = URL.createObjectURL(await daisy.downloadReport(experimentId));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `daisy-evaluation-${experimentId}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Report download failed.");
+    } finally { setBusy(false); }
+  }
+  return <div className="model-download">
+    <button className="pill" onClick={download} disabled={busy}>{busy ? "Preparing report…" : "Download final evaluation ↓"}</button>
+    {error && <p role="alert">{error}</p>}
+  </div>;
+}
+
 function ResultsPanel({ run }: { run: Run }) {
   const { state } = run;
   const st = state.status.results;
@@ -523,13 +548,14 @@ function ResultsPanel({ run }: { run: Run }) {
       <ModelDownload training={t} />
 
       {st !== "done" && st !== "running" && (
-        <ReadyState title="Evaluation agent" desc="Runs a deeper diagnostic on the winning model — train/test gap, and per-problem diagnostics." action="Run evaluation" onRun={run.runEvaluation} />
+        <ReadyState title="Finalize this winner" desc="Measure this saved model on the reserved test fold and compare it with a simple baseline. This fixes the final winner for this source dataset; further model selection needs new unseen data. Retrying this winner returns its saved scores." action="Finalize and evaluate" onRun={run.runEvaluation} />
       )}
       {st === "running" && <Loader message="DAISY is evaluating the winning model…" />}
       {st === "error" && <ErrorBox message={state.errors.results || "Evaluation failed"} onRetry={run.runEvaluation} />}
 
       {e && (
         <div className="eval">
+          {e.output_summary?.experiment_id && <FinalReportDownload experimentId={e.output_summary.experiment_id} />}
           {e.output_summary?.verdict && (
             <div className={`verdict ${e.output_summary.verdict}`}>
               <span className="verdict-dot" />
@@ -547,6 +573,7 @@ function ResultsPanel({ run }: { run: Run }) {
             {e.output_summary?.train_metrics && <div className="report-block"><h5>Train metrics</h5><MetricGrid metrics={e.output_summary.train_metrics} /></div>}
             {e.output_summary?.test_metrics && <div className="report-block"><h5>Test metrics</h5><MetricGrid metrics={e.output_summary.test_metrics} /></div>}
           </div>
+          {e.output_summary?.baseline_test_metrics && <div className="report-block"><h5>Simple baseline on the same test rows</h5><MetricGrid metrics={e.output_summary.baseline_test_metrics} /></div>}
           {e.output_summary?.train_test_gap != null && (
             <div className="report-line"><span className="report-k">Train / test gap</span><span className="report-v">{formatValue(e.output_summary.train_test_gap)}</span></div>
           )}

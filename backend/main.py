@@ -71,6 +71,8 @@ import model_export
 from model_catalog import catalog, row_limit
 from input_review import InputReview, read_source
 from training_config import TrainingConfig, configured_partitions
+from experiments import ExperimentRegistry, FinalizationConflict, public_record, timestamp
+from final_evaluation import load_owned_package, evaluate_saved_winner
 from resource_access import ResourceOwners
 from persistence import build_store, PersistenceError, json_safe
 from job_queue import build_queue, QueueError
@@ -82,6 +84,7 @@ resource_store = build_store()
 job_queue = build_queue(resource_store)
 ai_budget = build_budget(resource_store)
 USER_AI_SETTINGS: dict[str, dict] = {}
+experiment_registry = ExperimentRegistry()
 
 app = FastAPI(title="D.A.I.S.Y ML Backend", version="0.3.0")
 
@@ -662,7 +665,10 @@ def download_original_csv(dataset_id: str, request: Request):
 @app.post("/dataset/{dataset_id}/review")
 def review_dataset(dataset_id: str, req: InputReview, request: Request):
     owner = authenticated_user_id(request)
-    root = owned_source_dataset(dataset_id, owner)
+    source = owned_source_dataset(dataset_id, owner)
+    if experiment_registry.finalization(resource_store, source, owner):
+        raise HTTPException(status_code=409, detail="This source has a finalized study. Use new unseen data for a new study.")
+    root = source
     try:
         frame, policy = read_source(source_bytes(root, owner), req)
         if req.training_config:
@@ -1380,12 +1386,16 @@ def execute_model_training(req: ModelTrainingRequest, request: Request):
     source_id = owned_source_dataset(req.dataset_id, owner_id)
     check_training_limits(df, req.candidate_models)
     check_training_limits(DATASETS[source_id], req.candidate_models)
+    if experiment_registry.finalization(resource_store, source_id, owner_id):
+        raise HTTPException(status_code=409, detail="This source has a final winner. Training on its revealed holdout would bias further evaluation. Start a study with new unseen data.")
 
     workflow_id = req.workflow_id or new_workflow_id()
     if req.dataset_id in DATASET_PARENTS and req.dataset_id not in DATASET_TRANSFORMS:
         raise HTTPException(status_code=409, detail="This dataset predates saved preprocessing. Upload it again and rerun the pipeline to create a portable model.")
     fitted_models = {}
     fitted_preprocessing = []
+    evaluation_state = {}
+    experiment_id = str(uuid.uuid4())
 
     with Timer() as timer:
         try:
@@ -1396,10 +1406,13 @@ def execute_model_training(req: ModelTrainingRequest, request: Request):
                 preprocessing_steps=DATASET_TRANSFORMS.get(req.dataset_id, []),
                 fitted_preprocessing=fitted_preprocessing,
                 configuration=dataset_training_config(req.dataset_id, owner_id, req.target_column),
+                finalize_test=False,
+                evaluation_state=evaluation_state,
             )
         except model_training.TrainingDataError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
+    result["experiment_id"] = experiment_id
     artifact = None
     export_error = None
     if result["best_model"]:
@@ -1436,12 +1449,13 @@ def execute_model_training(req: ModelTrainingRequest, request: Request):
             f"{result['split_strategy']} train/validation/test split. "
             f"Best model selected by {result['primary_metric']} "
             f"({'lower' if result['primary_metric'] in {'rmse', 'mae'} else 'higher'} is better) "
-            "on validation scores. Only the winner is measured on the final test fold. "
+            "on validation scores. The final test remains sealed until explicit finalization. "
             "Preprocessing was fitted on the training fold only, and this is an "
             "objective metric comparison rather than an AI judgment call."
         ),
         actions=result["results"],
         output_summary={
+            "experiment_id": experiment_id,
             "problem_type": result["problem_type"],
             "primary_metric": result["primary_metric"],
             "best_model": result["best_model"],
@@ -1462,6 +1476,12 @@ def execute_model_training(req: ModelTrainingRequest, request: Request):
         },
         execution_time_seconds=timer.elapsed,
     )
+    experiment_registry.create(resource_store, experiment_id, owner_id, {
+        "experiment_id": experiment_id, "created_at": timestamp(), "workflow_id": workflow_id,
+        "dataset_id": req.dataset_id, "source_dataset_id": source_id, "target_column": req.target_column,
+        "model_artifact": artifact, "training_result": result, "agent_record": record,
+        "evaluation_state": evaluation_state,
+    })
     save_pipeline_result(
         req.dataset_id,
         "model_training",
@@ -1480,15 +1500,14 @@ def execute_model_training(req: ModelTrainingRequest, request: Request):
             "target_column": req.target_column,
             "test_size": req.test_size,
             "workflow_id": workflow_id,
+            "experiment_id": experiment_id,
         },
     )
 
     return record
 
 
-@app.get("/models/{artifact_id}/download")
-def download_trained_model(artifact_id: str, request: Request):
-    owner_id = authenticated_user_id(request)
+def owned_artifact_path(artifact_id: str, owner_id: str):
     if not model_export.artifact_owned_by(artifact_id, owner_id) or not model_export.artifact_path(artifact_id).is_file():
         try:
             path = model_export.artifact_path(artifact_id)
@@ -1507,7 +1526,77 @@ def download_trained_model(artifact_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Model package not found.")
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Model package not found.")
+    return path
+
+
+@app.get("/models/{artifact_id}/download")
+def download_trained_model(artifact_id: str, request: Request):
+    path = owned_artifact_path(artifact_id, authenticated_user_id(request))
     return FileResponse(path, media_type="application/zip", filename=f"daisy-model-{artifact_id}.zip")
+
+
+def owned_experiment(identifier, owner):
+    record = experiment_registry.get(resource_store, identifier, owner)
+    if not record:
+        raise HTTPException(status_code=404, detail="Experiment not found.")
+    return record
+
+
+@app.get("/experiments")
+def list_experiments(request: Request):
+    rows = experiment_registry.list(resource_store, authenticated_user_id(request))
+    return {"experiments": [{"experiment_id": row["id"], "created_at": row["metadata"]["created_at"],
+                              "dataset_id": row["metadata"]["dataset_id"], "target_column": row["metadata"]["target_column"],
+                              "best_model": row["metadata"]["training_result"]["best_model"],
+                              "primary_metric": row["metadata"]["training_result"]["primary_metric"]} for row in rows]}
+
+
+@app.get("/experiments/{experiment_id}")
+def get_experiment(experiment_id: str, request: Request):
+    owner = authenticated_user_id(request)
+    record = owned_experiment(experiment_id, owner)
+    final = experiment_registry.finalization(resource_store, record["source_dataset_id"], owner)
+    report = final["report"] if final and final["experiment_id"] == experiment_id else None
+    return {**public_record(record), "final_evaluation": report}
+
+
+def finalize_experiment(identifier, owner):
+    experiment = owned_experiment(identifier, owner)
+    artifact = experiment.get("model_artifact")
+    if not artifact:
+        raise HTTPException(status_code=409, detail="This experiment has no validated model package. Train and export a winner first.")
+    # Ownership, checksums and frozen identity are verified before claiming the
+    # holdout; scoring failures allow retries of this same winner only.
+    path = owned_artifact_path(artifact["artifact_id"], owner)
+    try:
+        bundle, metadata = load_owned_package(path, experiment)
+        claimed = experiment_registry.claim(resource_store, experiment["source_dataset_id"], owner, identifier)
+        if claimed["report"] is not None:
+            return claimed["report"]
+        raw = interpreted_source(experiment["dataset_id"], owner)
+        measured = evaluate_saved_winner(bundle, metadata, experiment, raw)
+        measured["finalized_at"] = timestamp()
+        return experiment_registry.finish(resource_store, experiment["source_dataset_id"], owner, identifier, measured)
+    except FinalizationConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=409, detail=f"Final evaluation failed: {exc}") from exc
+
+
+@app.post("/experiments/{experiment_id}/finalize")
+def finalize_experiment_endpoint(experiment_id: str, request: Request):
+    return finalize_experiment(experiment_id, authenticated_user_id(request))
+
+
+@app.get("/experiments/{experiment_id}/report/download")
+def download_final_report(experiment_id: str, request: Request):
+    owner = authenticated_user_id(request)
+    experiment = owned_experiment(experiment_id, owner)
+    state = experiment_registry.finalization(resource_store, experiment["source_dataset_id"], owner)
+    if not state or state["experiment_id"] != experiment_id or state["report"] is None:
+        raise HTTPException(status_code=409, detail="Finalize this winner before downloading its final report.")
+    return StreamingResponse(io.BytesIO(json.dumps(state["report"], indent=2, allow_nan=False).encode()),
+                             media_type="application/json", headers={"Content-Disposition": f'attachment; filename="daisy-evaluation-{experiment_id}.json"'})
 
 
 class EvaluationRequest(BaseModel):
@@ -1516,17 +1605,12 @@ class EvaluationRequest(BaseModel):
     model_name: str
     test_size: Literal[0.2] = 0.2
     workflow_id: str | None = None
+    experiment_id: str | None = None
 
 
 @app.post("/agents/evaluation")
 def run_evaluation_agent(req: EvaluationRequest, request: Request):
-    """Re-trains ONLY the requested model (same split as Model Training,
-    given the same test_size/random_state) to get real predictions for
-    real diagnostics — a confusion matrix or residual analysis, and a
-    train-vs-test overfitting signal, none of which raw aggregate
-    metrics alone can give you. DeepSeek interprets the real numbers into
-    a plain-language verdict; a guardrail validates that verdict against
-    a fixed set of allowed values, same philosophy as every other agent."""
+    """Finalize the saved winner and optionally interpret measured diagnostics."""
     owner_id = authenticated_user_id(request)
     df = require_owned_dataset(req.dataset_id, owner_id)
     source_id = owned_source_dataset(req.dataset_id, owner_id)
@@ -1541,9 +1625,19 @@ def run_evaluation_agent(req: EvaluationRequest, request: Request):
 
     with Timer() as timer:
         training = get_pipeline_context(req.dataset_id).get("model_training", {})
-        eval_result = training.get("evaluation_data")
-        if not eval_result or training.get("best_model") != req.model_name or training.get("target_column") != req.target_column or training.get("test_size") != req.test_size or (req.workflow_id and training.get("workflow_id") != req.workflow_id):
-            raise HTTPException(status_code=409, detail="Train this run first. Evaluation only interprets its measured winning model.")
+        identifier = req.experiment_id or training.get("experiment_id")
+        if identifier:
+            experiment = owned_experiment(identifier, owner_id)
+            frozen = experiment["training_result"]
+            if experiment["dataset_id"] != req.dataset_id or frozen["best_model"] != req.model_name or experiment["target_column"] != req.target_column or frozen["test_size"] != req.test_size or (req.workflow_id and experiment["workflow_id"] != req.workflow_id):
+                raise HTTPException(status_code=409, detail="Evaluation request does not match the saved experiment.")
+            eval_result = finalize_experiment(identifier, owner_id)
+        else:
+            # Compatibility for historic snapshots whose test scores were
+            # already measured. No new fit or new test access is performed.
+            eval_result = training.get("evaluation_data")
+            if not eval_result or training.get("best_model") != req.model_name or training.get("target_column") != req.target_column or training.get("test_size") != req.test_size or (req.workflow_id and training.get("workflow_id") != req.workflow_id):
+                raise HTTPException(status_code=409, detail="Train this run first. Evaluation only interprets its measured winning model.")
 
         safe_result, aliases = provider_profile(eval_result, req.dataset_id, owner_id)
         prompt = evaluation.build_evaluation_prompt(safe_result)
@@ -1582,6 +1676,8 @@ def run_evaluation_agent(req: EvaluationRequest, request: Request):
             }
         ],
         output_summary={
+            "experiment_id": identifier,
+            "baseline_test_metrics": eval_result.get("baseline_test_metrics"),
             "verdict": verdict,
             "verdict_corrected_by_guardrail": was_corrected,
             "observations": plan.get("observations", []),

@@ -375,6 +375,7 @@ export function useDaisyRun() {
           datasetId: s.currentDatasetId as string,
           targetColumn: s.targetColumn as string,
           modelName: s.bestModel as string,
+          experimentId: s.training?.output_summary?.experiment_id,
           testSize: s.testSize,
           workflowId: s.workflowId,
         }),
@@ -386,7 +387,7 @@ export function useDaisyRun() {
           status: { ...prev.status, results: "done" },
         }))
     );
-  }, [run, s.currentDatasetId, s.targetColumn, s.bestModel, s.testSize, s.workflowId]);
+  }, [run, s.currentDatasetId, s.targetColumn, s.bestModel, s.testSize, s.workflowId, s.training]);
 
   const sendChat = useCallback(
     async (text: string) => {

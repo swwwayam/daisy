@@ -158,4 +158,8 @@ if __name__ == "__main__":
     parser.add_argument("output_csv", nargs="?", default="predictions.csv")
     parser.add_argument("--model", default=str(Path(__file__).with_name("model.joblib")))
     args = parser.parse_args()
-    predict(load_model(args.model), pd.read_csv(args.input_csv)).to_csv(args.output_csv, index=False)
+    bundle = load_model(args.model)
+    # New packages interpret tokens themselves; historic packages without a
+    # normalization step retain their original pandas parsing semantics.
+    options = {"dtype": str, "keep_default_na": False} if any(step["type"] == "normalize" for step in bundle["preprocessing"]) else {}
+    predict(bundle, pd.read_csv(args.input_csv, **options)).to_csv(args.output_csv, index=False)

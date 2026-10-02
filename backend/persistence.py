@@ -86,6 +86,7 @@ class SQLiteStore:
         with self.connect() as db:
             db.execute("CREATE TABLE IF NOT EXISTS resources (id TEXT PRIMARY KEY, owner TEXT NOT NULL, kind TEXT NOT NULL, metadata TEXT NOT NULL, blob BLOB, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)")
             db.execute("CREATE INDEX IF NOT EXISTS resources_owner_kind_updated ON resources(owner,kind,updated_at DESC,id DESC)")
+            db.execute("CREATE TABLE IF NOT EXISTS finalizations (source TEXT NOT NULL, owner TEXT NOT NULL, experiment_id TEXT NOT NULL, report TEXT, PRIMARY KEY(source,owner))")
 
     @contextmanager
     def connect(self):
@@ -104,7 +105,36 @@ class SQLiteStore:
             existing = db.execute("SELECT owner,kind FROM resources WHERE id=?", (identifier,)).fetchone()
             if existing and (existing["owner"] != owner or existing["kind"] != kind):
                 raise PersistenceError("Resource identity cannot be reassigned")
+            if existing and kind == "experiment":
+                raise PersistenceError("Experiment records are immutable")
             db.execute("INSERT INTO resources(id,owner,kind,metadata,blob) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata,blob=excluded.blob,updated_at=CURRENT_TIMESTAMP", (identifier, owner, kind, json.dumps(metadata, allow_nan=False), blob))
+
+    def insert_experiment(self, identifier, owner, metadata):
+        with self.connect() as db:
+            db.execute("INSERT INTO resources(id,owner,kind,metadata) VALUES(?,?,?,?)", (identifier, owner, "experiment", json.dumps(metadata, allow_nan=False)))
+
+    def finalization(self, source, owner):
+        with self.connect() as db:
+            row = db.execute("SELECT experiment_id,report FROM finalizations WHERE source=? AND owner=?", (source, owner)).fetchone()
+        return {"experiment_id": row["experiment_id"], "report": json.loads(row["report"]) if row["report"] else None} if row else None
+
+    def claim_finalization(self, source, owner, experiment):
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("INSERT OR IGNORE INTO finalizations(source,owner,experiment_id) VALUES(?,?,?)", (source, owner, experiment))
+            row = db.execute("SELECT experiment_id,report FROM finalizations WHERE source=? AND owner=?", (source, owner)).fetchone()
+            return {"experiment_id": row["experiment_id"], "report": json.loads(row["report"]) if row["report"] else None}
+
+    def finish_finalization(self, source, owner, experiment, report):
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT experiment_id,report FROM finalizations WHERE source=? AND owner=?", (source, owner)).fetchone()
+            if not row or row["experiment_id"] != experiment:
+                raise PersistenceError("Final evaluation does not match the claimed experiment")
+            if row["report"]:
+                return json.loads(row["report"])
+            db.execute("UPDATE finalizations SET report=? WHERE source=? AND owner=?", (json.dumps(report, allow_nan=False), source, owner))
+            return report
 
     def get(self, identifier, owner, kind):
         with self.connect() as db:
@@ -163,6 +193,8 @@ class SupabaseStore:
     def save(self, identifier, owner, kind, metadata, blob=None):
         filters = self.filters(identifier, owner, kind)
         existing = self.request("GET", "/rest/v1/daisy_resources", params={**filters, "select": "id,storage_bucket,storage_path"}).json()
+        if existing and kind == "experiment":
+            raise PersistenceError("Experiment records are immutable")
         body = {"metadata": metadata, "storage_bucket": None, "storage_path": None}
         if blob is not None:
             if len(blob) > 50 * 1024 * 1024:
@@ -185,6 +217,19 @@ class SupabaseStore:
                 self.request("DELETE", f"/storage/v1/object/{existing[0]['storage_bucket']}", json={"prefixes": [existing[0]["storage_path"]]})
             except PersistenceError:
                 logging.getLogger("daisy.storage").warning("Old snapshot cleanup needs retry")
+
+    def insert_experiment(self, identifier, owner, metadata):
+        self.request("POST", "/rest/v1/daisy_resources", json={"id": identifier, "owner_id": owner, "kind": "experiment", "metadata": metadata})
+
+    def finalization(self, source, owner):
+        rows = self.request("GET", "/rest/v1/daisy_finalizations", params={"source_id": f"eq.{source}", "owner_id": f"eq.{owner}", "select": "experiment_id,report"}).json()
+        return rows[0] if rows else None
+
+    def claim_finalization(self, source, owner, experiment):
+        return self.request("POST", "/rest/v1/rpc/daisy_claim_finalization", json={"p_source": source, "p_owner": owner, "p_experiment": experiment}).json()
+
+    def finish_finalization(self, source, owner, experiment, report):
+        return self.request("POST", "/rest/v1/rpc/daisy_finish_finalization", json={"p_source": source, "p_owner": owner, "p_experiment": experiment, "p_report": report}).json()
 
     def get(self, identifier, owner, kind):
         rows = self.request("GET", "/rest/v1/daisy_resources", params={**self.filters(identifier, owner, kind), "select": "metadata,storage_bucket,storage_path"}).json()
