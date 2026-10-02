@@ -186,14 +186,36 @@ export const daisy = {
     candidateModels: string[];
     testSize: number;
     workflowId: string | null;
+    onQueued?: (id: string) => void;
   }): Promise<TrainingResult> {
-    return postJson("/agents/model-training", {
+    const res = await fetch(`${BASE_URL}/agents/model-training`, { method: "POST",
+      headers: await authHeaders({ "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }),
+      body: JSON.stringify({
       dataset_id: args.datasetId,
       target_column: args.targetColumn,
       candidate_models: args.candidateModels,
       test_size: args.testSize,
       workflow_id: args.workflowId,
-    });
+    }) });
+    const reply = await json<TrainingResult | { job_id: string }>(res);
+    if (typeof reply.job_id === "string") {
+      args.onQueued?.(reply.job_id);
+      return daisy.waitForTrainingJob(reply.job_id);
+    }
+    return reply as TrainingResult;
+  },
+
+  async waitForTrainingJob(id: string): Promise<TrainingResult> {
+    for (;;) {
+      const job = await json<{ status: string; result?: TrainingResult; error?: string }>(await fetch(`${BASE_URL}/training-jobs/${encodeURIComponent(id)}`, { headers: await authHeaders() }));
+      if (job.status === "completed" && job.result) return job.result;
+      if (job.status === "failed" || job.status === "cancelled") throw new Error(job.error || "Training was cancelled.");
+      await new Promise(resolve => window.setTimeout(resolve, 1500));
+    }
+  },
+
+  async cancelTraining(id: string): Promise<void> {
+    await postJson(`/training-jobs/${encodeURIComponent(id)}/cancel`, {});
   },
 
   async evaluation(args: {

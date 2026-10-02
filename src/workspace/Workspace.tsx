@@ -357,7 +357,7 @@ function TrainingPanel({ run }: { run: Run }) {
   const st = state.status.training;
   const [picked, setPicked] = useState<string[]>([]);
   const [testSize, setTestSize] = useState(0.2);
-  useEffect(() => { setPicked(acceptedModels); }, [acceptedModels]);
+  useEffect(() => { setPicked(acceptedModels.slice(0, 3)); }, [acceptedModels]);
 
   if (st === "idle") return <Empty>Run model selection to unlock training.</Empty>;
   if (st === "running") return <Loader message="DAISY is training candidate models…" />;
@@ -372,10 +372,11 @@ function TrainingPanel({ run }: { run: Run }) {
           <Empty>Model selection didn't return any accepted models to train.</Empty>
         ) : (
           <>
-            <p className="lead">Select which candidates to train and hand DAISY the wheel.</p>
+            <p className="lead">Choose up to three candidates for this training run.</p>
             <div className="col-grid">
               {acceptedModels.map((mName) => (
                 <button key={mName} className={`col-chip ${picked.includes(mName) ? "sel" : ""}`}
+                  disabled={!picked.includes(mName) && picked.length >= 3}
                   onClick={() => setPicked((p) => p.includes(mName) ? p.filter((x) => x !== mName) : [...p, mName])}>
                   {mName}
                 </button>
@@ -799,7 +800,8 @@ export default function Workspace({ onExit, onSignOut }: { onExit: () => void; o
         <button className="logo" onClick={onExit}><span className="logo-mark" />D.A.I.S.Y</button>
         <div className="ws-nav-mid mono">{run.state.workflowId ? `run ${run.state.workflowId.slice(0, 8)}` : "new run"}</div>
         <div className="ws-nav-actions">
-          <button className="pill pill-ghost" onClick={() => { run.reset(); setFocus(null); }}>New run</button>
+          {run.state.trainingJobId && run.state.status.training === "running" && <button className="pill pill-ghost" onClick={() => { void daisy.cancelTraining(run.state.trainingJobId as string); }}>Cancel training</button>}
+          <button className="pill pill-ghost" disabled={Object.values(run.state.status).includes("running")} onClick={() => { run.reset(); setFocus(null); }}>New run</button>
           <button className="pill pill-ghost" onClick={onSignOut}>Sign out</button>
         </div>
       </header>

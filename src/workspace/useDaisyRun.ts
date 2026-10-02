@@ -77,6 +77,7 @@ export function parseModels(actions?: Dict[]): ParsedModel[] {
 }
 
 export interface RunState {
+  trainingJobId: string | null;
   workflowId: string | null;
   originalDatasetId: string | null;
   currentDatasetId: string | null; // latest processed id
@@ -110,6 +111,7 @@ const initialStatus: Record<StageId, StageStatus> = {
 };
 
 const initialState: RunState = {
+  trainingJobId: null,
   workflowId: null,
   originalDatasetId: null,
   currentDatasetId: null,
@@ -140,7 +142,7 @@ export function useDaisyRun() {
   }, []);
 
   useEffect(() => {
-    if (!s.workflowId || !s.originalDatasetId || Object.values(s.status).includes("running") || s.chatBusy) return;
+    if (!s.workflowId || !s.originalDatasetId || (Object.values(s.status).includes("running") && !s.trainingJobId) || s.chatBusy) return;
     const timer = window.setTimeout(() => {
       daisy.saveRun(s.workflowId as string, s).then(r => {
         if (r.saved) daisy.savedRuns().then(history => setSavedRuns(history.runs)).catch(e => setHistoryError(errMsg(e)));
@@ -155,6 +157,14 @@ export function useDaisyRun() {
       if (!state.status || !state.currentDatasetId) throw new Error("Saved run is incomplete");
       setS({ ...initialState, ...state, chatBusy: false, downloadBusy: false });
       setHistoryError("");
+      if (state.trainingJobId) {
+        daisy.waitForTrainingJob(state.trainingJobId).then(result => setS(prev => prev.workflowId === state.workflowId ? {
+          ...prev, trainingJobId: null, training: result, bestModel: result.output_summary?.best_model ?? null,
+          status: { ...prev.status, training: "done", results: result.output_summary?.best_model ? "available" : "idle" },
+        } : prev)).catch(e => setS(prev => prev.workflowId === state.workflowId ? {
+          ...prev, trainingJobId: null, status: { ...prev.status, training: "error" }, errors: { ...prev.errors, training: errMsg(e) },
+        } : prev));
+      }
     } catch (e) { setHistoryError(errMsg(e)); }
   }, []);
 
@@ -165,7 +175,7 @@ export function useDaisyRun() {
   );
   const setError = useCallback(
     (id: StageId, msg: string) =>
-      setS((prev) => ({ ...prev, status: { ...prev.status, [id]: "error" }, errors: { ...prev.errors, [id]: msg } })),
+      setS((prev) => ({ ...prev, trainingJobId: id === "training" ? null : prev.trainingJobId, status: { ...prev.status, [id]: "error" }, errors: { ...prev.errors, [id]: msg } })),
     []
   );
 
@@ -282,7 +292,7 @@ export function useDaisyRun() {
   const runTraining = useCallback(
     (candidateModels: string[], testSize: number) => {
       if (!s.currentDatasetId || !s.targetColumn || candidateModels.length === 0) return;
-      setS(prev => ({ ...prev, training: null, evaluation: null, bestModel: null,
+      setS(prev => ({ ...prev, trainingJobId: null, training: null, evaluation: null, bestModel: null,
         status: { ...prev.status, results: "idle" } }));
       return run(
         "training",
@@ -293,11 +303,13 @@ export function useDaisyRun() {
             candidateModels,
             testSize,
             workflowId: s.workflowId,
+            onQueued: id => setS(prev => ({ ...prev, trainingJobId: id, testSize })),
           }),
         (r) =>
           setS((prev) => ({
             ...prev,
             training: r,
+            trainingJobId: null,
             testSize,
             workflowId: r.workflow_id ?? prev.workflowId,
             bestModel: r.output_summary?.best_model ?? null,

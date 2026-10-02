@@ -69,10 +69,12 @@ import model_training
 import model_export
 from resource_access import ResourceOwners
 from persistence import build_store, PersistenceError
+from job_queue import build_queue, QueueError
 from agent_schema import Timer, build_agent_record, new_workflow_id
 
 load_dotenv()
 resource_store = build_store()
+job_queue = build_queue(resource_store)
 
 app = FastAPI(title="D.A.I.S.Y ML Backend", version="0.3.0")
 
@@ -175,7 +177,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_methods=["GET", "POST", "PUT", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "Idempotency-Key"],
     expose_headers=["X-Request-ID"],
 )
 
@@ -1081,13 +1083,65 @@ def run_model_selection_agent(req: ModelSelectionRequest, request: Request):
 class ModelTrainingRequest(BaseModel):
     dataset_id: str
     target_column: str
-    candidate_models: list[str]
-    test_size: float = 0.2
+    candidate_models: list[str] = Field(min_length=1, max_length=3)
+    test_size: float = Field(default=0.2, ge=0.1, le=0.4)
     workflow_id: str | None = None
 
 
 @app.post("/agents/model-training")
 def run_model_training_agent(req: ModelTrainingRequest, request: Request):
+    if job_queue is not None:
+        return enqueue_training(req, request)
+    return execute_model_training(req, request)
+
+
+def check_training_limits(df, candidates):
+    if len(df) > 100000 or len(df.columns) > 1000 or df.size > 20000000 or df.memory_usage(deep=True).sum() > 256 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Training limit: 100k rows, 1k columns, 20m cells, 256 MB in memory.")
+    if len(df) > 10000 and any(name in {"svm_classifier", "svm_regressor"} for name in candidates):
+        raise HTTPException(status_code=413, detail="SVM training is limited to 10k rows; choose a tree or linear model.")
+
+
+@app.post("/training-jobs")
+def enqueue_training(req: ModelTrainingRequest, request: Request):
+    owner = authenticated_user_id(request)
+    df = require_owned_dataset(req.dataset_id, owner)
+    source_id = owned_source_dataset(req.dataset_id, owner)
+    check_training_limits(df, req.candidate_models)
+    check_training_limits(DATASETS[source_id], req.candidate_models)
+    if req.target_column not in DATASETS[source_id].columns or any(name not in model_training.MODEL_FACTORY for name in req.candidate_models):
+        raise HTTPException(status_code=400, detail="Choose an existing target column and supported candidate models.")
+    if job_queue is None:
+        raise HTTPException(status_code=503, detail="Training jobs require durable persistence and a worker.")
+    key = request.headers.get("Idempotency-Key") or str(uuid.uuid4())
+    if len(key) > 128 or not key.isascii():
+        raise HTTPException(status_code=400, detail="Invalid idempotency key")
+    try:
+        job = job_queue.enqueue(owner, key, req.model_dump())
+    except QueueError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+    return JSONResponse(status_code=202, content={"job_id": job["id"], "status": job["status"]})
+
+
+@app.get("/training-jobs/{job_id}")
+def training_job_status(job_id: str, request: Request):
+    job = job_queue.get(job_id, authenticated_user_id(request)) if job_queue else None
+    if not job:
+        raise HTTPException(status_code=404, detail="Training job not found.")
+    if job["status"] == "completed":
+        DATASETS.pop(job["payload"]["dataset_id"], None)
+    return {"job_id": job["id"], "status": job["status"], "result": job["result"], "error": job["error"]}
+
+
+@app.post("/training-jobs/{job_id}/cancel")
+def cancel_training_job(job_id: str, request: Request):
+    job = job_queue.cancel(job_id, authenticated_user_id(request)) if job_queue else None
+    if not job:
+        raise HTTPException(status_code=404, detail="Training job not found.")
+    return {"job_id": job["id"], "status": job["status"]}
+
+
+def execute_model_training(req: ModelTrainingRequest, request: Request):
     """NO LLM call in this agent — see model_training.py's module
     docstring for why. Real sklearn .fit()/.predict() for every requested
     candidate; the winner is picked by an objective metric comparison,
@@ -1095,6 +1149,8 @@ def run_model_training_agent(req: ModelTrainingRequest, request: Request):
     owner_id = authenticated_user_id(request)
     df = require_owned_dataset(req.dataset_id, owner_id)
     source_id = owned_source_dataset(req.dataset_id, owner_id)
+    check_training_limits(df, req.candidate_models)
+    check_training_limits(DATASETS[source_id], req.candidate_models)
 
     workflow_id = req.workflow_id or new_workflow_id()
     if req.dataset_id in DATASET_PARENTS and req.dataset_id not in DATASET_TRANSFORMS:
