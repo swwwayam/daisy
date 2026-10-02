@@ -34,6 +34,14 @@ Pages are not a frozen snapshot: saves from another tab may move runs between
 pages. Refresh history to restart browsing from the latest runs. No new cloud
 migration is needed for this change; existing runtime migrations are sufficient.
 
+Saving and restoring runs validates references again on the server. The original
+dataset must be an owned root upload; the current dataset must descend from that
+same upload. An attached training job must be owned by the caller and match the
+current dataset, workflow ID (when recorded), and target column. Invalid references
+are rejected before overwriting an existing snapshot. Older inconsistent snapshots
+also fail restoration with a clear error; resume a valid run or upload again.
+Client snapshots remain UI state, not authoritative model results or pipeline facts.
+
 For development without network access, set `DAISY_PERSISTENCE=sqlite`. The default
 database is `backend/state/daisy.sqlite`; that directory is ignored by Git. Memory
 mode retains the old demo behavior and does not offer durable saved runs. Dataset

@@ -700,6 +700,31 @@ class RunSnapshotRequest(BaseModel):
     state: dict
 
 
+def validate_run_references(run_id, state, owner, *, restoring=False):
+    invalid_status = 409 if restoring else 400
+    if not isinstance(state, dict) or state.get("workflowId") != run_id:
+        raise HTTPException(status_code=invalid_status, detail="Run identity does not match")
+    original, current = state.get("originalDatasetId"), state.get("currentDatasetId")
+    if not isinstance(original, str) or not original or not isinstance(current, str) or not current:
+        raise HTTPException(status_code=invalid_status, detail="Run requires valid dataset IDs")
+    original_root = owned_source_dataset(original, owner)
+    current_root = owned_source_dataset(current, owner)
+    if original_root != original or current_root != original_root:
+        raise HTTPException(status_code=409, detail="Run datasets must belong to the same original upload.")
+    job_id = state.get("trainingJobId")
+    if job_id is not None:
+        if not isinstance(job_id, str) or not job_id:
+            raise HTTPException(status_code=invalid_status, detail="Invalid training job reference")
+        job = job_queue.get(job_id, owner) if job_queue else None
+        if not job:
+            raise HTTPException(status_code=404, detail="Training job not found.")
+        payload = job["payload"]
+        if payload.get("dataset_id") != current or payload.get("workflow_id") not in (None, run_id):
+            raise HTTPException(status_code=409, detail="Training job does not belong to this run.")
+        if state.get("targetColumn") != payload.get("target_column"):
+            raise HTTPException(status_code=409, detail="Run target does not match the training job.")
+
+
 @app.get("/runs")
 def list_saved_runs(request: Request, limit: int = Query(20, ge=1, le=50), offset: int = Query(0, ge=0, le=100000)):
     rows = resource_store.list_runs(authenticated_user_id(request), limit + 1, offset)
@@ -714,14 +739,9 @@ def save_run_snapshot(run_id: str, req: RunSnapshotRequest, request: Request):
         uuid.UUID(run_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid run ID")
-    if req.state.get("workflowId") != run_id:
-        raise HTTPException(status_code=400, detail="Run identity does not match")
     if len(json.dumps(req.state)) > 1024 * 1024:
         raise HTTPException(status_code=413, detail="Run snapshot exceeds 1 MB")
-    for key in ("originalDatasetId", "currentDatasetId"):
-        if not req.state.get(key):
-            raise HTTPException(status_code=400, detail="Run requires dataset IDs")
-        owned_source_dataset(req.state[key], owner)
+    validate_run_references(run_id, req.state, owner)
     resource_store.save(run_id, owner, "run", req.state)
     return {"saved": resource_store.enabled}
 
@@ -732,8 +752,7 @@ def get_saved_run(run_id: str, request: Request):
     saved = resource_store.get(run_id, owner, "run")
     if not saved:
         raise HTTPException(status_code=404, detail="Run not found.")
-    for key in ("originalDatasetId", "currentDatasetId"):
-        owned_source_dataset(saved["metadata"][key], owner)
+    validate_run_references(run_id, saved["metadata"], owner, restoring=True)
     return saved["metadata"]
 
 
