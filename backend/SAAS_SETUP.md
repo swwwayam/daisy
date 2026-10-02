@@ -98,6 +98,15 @@ Use one API process for this version: dataset/context caches do not yet support
 fully coordinated writes across API replicas. Worker claims and budget reservations
 are atomic, and privacy settings are read from durable metadata before new calls.
 
+The catalog now contains 27 scikit-learn models (12 classifiers, 15 regressors).
+The model selection stage shows all compatible models, with AI/rule recommendations
+separate from availability. Training can compare any three compatible models. New
+families include decision trees, Extra Trees, histogram boosting, AdaBoost, Gaussian
+Naive Bayes, SGD, MLP, KNN regression, Lasso, Elastic Net and Huber regression.
+Scale-sensitive models include an exported, training-fitted StandardScaler pipeline.
+SVM/MLP are limited to 10k rows; KNN to 50k rows. All models remain CPU-based and
+use existing scikit-learn dependencies. Neural-network convergence is not guaranteed.
+
 ## Downloaded package integrity
 
 New model ZIPs include `checksums.json` with SHA-256 hashes for the estimator,

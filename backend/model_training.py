@@ -61,18 +61,8 @@ from model_selection import detect_problem_type
 # Kept here rather than imported to avoid this module depending on
 # sklearn-object construction happening inside model_selection.py, which
 # only ever deals with model NAMES, never instances.
-MODEL_FACTORY = {
-    "logistic_regression": lambda: LogisticRegression(max_iter=1000, random_state=42),
-    "random_forest_classifier": lambda: RandomForestClassifier(random_state=42),
-    "gradient_boosting_classifier": lambda: GradientBoostingClassifier(random_state=42),
-    "knn_classifier": lambda: KNeighborsClassifier(),
-    "svm_classifier": lambda: SVC(probability=True, random_state=42),
-    "linear_regression": lambda: LinearRegression(),
-    "random_forest_regressor": lambda: RandomForestRegressor(random_state=42),
-    "gradient_boosting_regressor": lambda: GradientBoostingRegressor(random_state=42),
-    "ridge_regression": lambda: Ridge(),
-    "svm_regressor": lambda: SVR(),
-}
+from model_catalog import MODEL_FACTORY
+
 
 # Which metric decides the winner, and whether higher or lower is better.
 PRIMARY_METRIC = {"classification": "f1_weighted", "regression": "rmse"}

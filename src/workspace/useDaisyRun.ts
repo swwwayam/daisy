@@ -435,6 +435,7 @@ export function useDaisyRun() {
   }, [patch, s.currentDatasetId]);
 
   const acceptedModels = useMemo(() => {
+    if (s.selection?.output_summary?.available_models?.length) return s.selection.output_summary.available_models;
     const parsed = parseModels(s.selection?.actions);
     const accepted = parsed.filter((m) => m.accepted === true).map((m) => m.name);
     if (accepted.length) return accepted;

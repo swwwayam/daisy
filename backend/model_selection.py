@@ -39,21 +39,7 @@ from typing import Any
 
 import pandas as pd
 
-CLASSIFICATION_MODELS = [
-    "logistic_regression",
-    "random_forest_classifier",
-    "gradient_boosting_classifier",
-    "knn_classifier",
-    "svm_classifier",
-]
-
-REGRESSION_MODELS = [
-    "linear_regression",
-    "random_forest_regressor",
-    "gradient_boosting_regressor",
-    "ridge_regression",
-    "svm_regressor",
-]
+from model_catalog import CLASSIFICATION_MODELS, REGRESSION_MODELS
 
 # Heuristic: if a numeric target's number of unique values is small relative
 # to the row count (and under an absolute cap), treat it as classification

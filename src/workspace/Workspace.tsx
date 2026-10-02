@@ -310,7 +310,7 @@ function SelectionPanel({ run }: { run: Run }) {
   const { state } = run;
   const st = state.status.selection;
   if (st === "idle") return <Empty>Select a target column to unlock model selection.</Empty>;
-  if (st === "available") return <ReadyState title="Model Selection agent" desc="Infers the problem type and proposes candidate models, accepting or rejecting each with reasoning." action="Run model selection" onRun={run.runSelection} />;
+  if (st === "available") return <ReadyState title="Model Selection agent" desc="Recommends models from the full catalog. You can choose other compatible models when training." action="Run model selection" onRun={run.runSelection} />;
   if (st === "running") return <Loader message="DAISY is selecting models…" />;
   if (st === "error") return <ErrorBox message={state.errors.selection || "Model selection failed"} onRetry={run.runSelection} />;
   const m = state.selection;
@@ -349,6 +349,7 @@ function SelectionPanel({ run }: { run: Run }) {
           <div className="tag-list">{m.output_summary.ranked_candidates.map((c, i) => <span className="tag" key={c}><span className="rank">{i + 1}</span>{c}</span>)}</div>
         </div>
       )}
+      {!!m.output_summary?.available_models?.length && <div className="report-block"><h5>All compatible models ({m.output_summary.available_models.length})</h5><p>These are available in the training stage. Recommendations above are suggestions; measured validation scores decide the winner.</p><div className="tag-list">{m.output_summary.available_models.map(name => <span className="tag" key={name}>{humanize(name)}</span>)}</div></div>}
     </div>
   );
 }

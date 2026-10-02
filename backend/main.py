@@ -68,6 +68,7 @@ import feature_engineering
 import model_selection
 import model_training
 import model_export
+from model_catalog import catalog, row_limit
 from input_review import InputReview, read_source
 from resource_access import ResourceOwners
 from persistence import build_store, PersistenceError, json_safe
@@ -1167,6 +1168,12 @@ class ModelSelectionRequest(BaseModel):
     workflow_id: str | None = None
 
 
+@app.get("/models/catalog")
+def get_model_catalog(request: Request, problem_type: Literal["classification", "regression"] | None = None):
+    authenticated_user_id(request)
+    return {"models": catalog(problem_type), "max_candidates_per_job": 3}
+
+
 @app.post("/agents/model-selection")
 def run_model_selection_agent(req: ModelSelectionRequest, request: Request):
     """This agent does not transform the dataset — it recommends which ML
@@ -1231,6 +1238,7 @@ def run_model_selection_agent(req: ModelSelectionRequest, request: Request):
         actions=valid + rejected,
         output_summary={
             "problem_type": profile["problem_type"],
+            "available_models": list(dict.fromkeys([*[entry["model"] for entry in valid], *[item["name"] for item in catalog(profile["problem_type"])]])),
             "top_recommendation": valid[0]["model"] if valid else None,
             "ranked_candidates": [r["model"] for r in sorted(valid, key=lambda r: r.get("rank") or 99)],
         },
@@ -1276,6 +1284,9 @@ def check_training_limits(df, candidates):
         raise HTTPException(status_code=413, detail="Training limit: 100k rows, 1k columns, 20m cells, 256 MB in memory.")
     if len(df) > 10000 and any(name in {"svm_classifier", "svm_regressor"} for name in candidates):
         raise HTTPException(status_code=413, detail="SVM training is limited to 10k rows; choose a tree or linear model.")
+    for name in candidates:
+        if len(df) > row_limit(name):
+            raise HTTPException(status_code=413, detail=f"{name} is limited to {row_limit(name):,} rows. Choose another model.")
 
 
 def check_feature_expansion(df, actions):

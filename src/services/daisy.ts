@@ -118,7 +118,7 @@ export interface FeatureEngineeringResult extends AgentResult {
 }
 
 export interface ModelSelectionResult extends AgentResult {
-  output_summary?: { problem_type?: string; top_recommendation?: string | null; ranked_candidates?: string[] };
+  output_summary?: { problem_type?: string; top_recommendation?: string | null; ranked_candidates?: string[]; available_models?: string[] };
   metrics?: { candidates_proposed?: number; candidates_accepted?: number; candidates_rejected?: number };
 }
 
