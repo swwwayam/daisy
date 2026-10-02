@@ -75,6 +75,19 @@ Use one API process for this version: dataset/context caches do not yet support
 fully coordinated writes across API replicas. Worker claims and budget reservations
 are atomic, and privacy settings are read from durable metadata before new calls.
 
+## Downloaded package integrity
+
+New model ZIPs include `checksums.json` with SHA-256 hashes for the estimator,
+metadata, input schema, dependency requirements, README, and prediction helper.
+Extract the complete ZIP into one directory. `daisy_predict.load_model()` checks
+the listed files before deserializing the estimator, rejecting altered or missing
+files with a clear error. Prediction CSVs added later are not checked. Older ZIPs
+without a checksum manifest remain compatible; only new exports include it.
+
+These checks detect corruption, not authenticity: someone replacing both a model
+and its checksum manifest can pass them. Continue loading only trusted packages,
+because joblib/pickle deserialization can execute code.
+
 ## Score interpretation
 
 The application reserves a reproducible 60/20/20 random train/validation/test split.

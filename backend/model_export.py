@@ -1,5 +1,6 @@
 """Capture fitted preprocessing and persist portable model ZIPs, without raw rows."""
 import io
+import hashlib
 import json
 import os
 import platform
@@ -200,19 +201,29 @@ Target values reflect any cleaning performed on the target during the training r
 Unseen categories map to zero one-hot columns, -1 labels, or zero frequency.
 Only load model.joblib from a trusted source: joblib/pickle loading can execute code.
 Keep the pinned dependency versions for reliable compatibility.
+New packages include checksums.json. The helper verifies package files before
+loading the estimator and rejects changed or missing files. Extract the complete
+ZIP together. Checksums detect accidental corruption; they are not a signature
+and do not make an untrusted pickle safe. Older packages without a manifest still load.
 """
     destination = artifact_path(identifier)
     temporary = destination.with_suffix(".tmp")
     owner_path = destination.with_suffix(".owner.json")
     owner_temporary = destination.with_suffix(".owner.tmp")
     try:
+        files = {
+            "model.joblib": payload.getvalue(),
+            "metadata.json": json.dumps(metadata, indent=2, allow_nan=False).encode("utf-8"),
+            "input_schema.json": json.dumps(schema, indent=2).encode("utf-8"),
+            "requirements.txt": ("\n".join(f"{name}=={version}" for name, version in versions.items()) + "\n").encode("utf-8"),
+            "README.md": readme.encode("utf-8"),
+            "daisy_predict.py": Path(__file__).with_name("daisy_predict.py").read_bytes(),
+        }
+        checksums = {"format_version": 1, "files": {name: hashlib.sha256(content).hexdigest() for name, content in files.items()}}
         with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("model.joblib", payload.getvalue())
-            archive.writestr("metadata.json", json.dumps(metadata, indent=2, allow_nan=False))
-            archive.writestr("input_schema.json", json.dumps(schema, indent=2))
-            archive.writestr("requirements.txt", "\n".join(f"{name}=={version}" for name, version in versions.items()) + "\n")
-            archive.writestr("README.md", readme)
-            archive.write(Path(__file__).with_name("daisy_predict.py"), "daisy_predict.py")
+            for name, content in files.items():
+                archive.writestr(name, content)
+            archive.writestr("checksums.json", json.dumps(checksums, indent=2))
         if owner_id is not None:
             # Ownership stays on the server, outside the downloadable package.
             # Publish it before the ZIP so a visible package never lacks its owner.

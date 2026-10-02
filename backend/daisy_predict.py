@@ -6,15 +6,48 @@
 """
 from pathlib import Path
 import argparse
+import hashlib
+import json
+import re
 
 import joblib
 import numpy as np
 import pandas as pd
 
 
+def verify_package(path):
+    """Detect incomplete/changed packages, not source authenticity or pickle safety."""
+    path = Path(path)
+    manifest_path = path.with_name("checksums.json")
+    if not manifest_path.exists():
+        return False  # Older DAISY packages remain supported.
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        files = manifest["files"]
+        if manifest["format_version"] != 1 or not isinstance(files, dict) or path.name not in files:
+            raise ValueError("Invalid checksum manifest")
+        for name, expected in files.items():
+            if not isinstance(name, str) or name in {".", ".."} or "/" in name or "\\" in name or ":" in name:
+                raise ValueError("Invalid package filename")
+            if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+                raise ValueError("Invalid package checksum")
+            member = path.with_name(name)
+            digest = hashlib.sha256()
+            with member.open("rb") as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(block)
+            if digest.hexdigest() != expected:
+                raise ValueError(f"Checksum mismatch: {name}")
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ValueError(f"Model package integrity check failed: {exc}. Extract a fresh trusted download.") from exc
+    return True
+
+
 def load_model(path=None):
     # joblib uses pickle: load only a model package you trust.
-    return joblib.load(path or Path(__file__).with_name("model.joblib"))
+    path = Path(path or Path(__file__).with_name("model.joblib"))
+    verify_package(path)
+    return joblib.load(path)
 
 
 def transform(bundle, data):

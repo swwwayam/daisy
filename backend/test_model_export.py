@@ -20,7 +20,7 @@ import feature_engineering as fe
 import main
 import model_export
 import model_training
-from daisy_predict import predict, transform
+from daisy_predict import load_model, predict, transform, verify_package
 from resource_access import ResourceOwners
 
 
@@ -63,7 +63,7 @@ class ModelExportTests(unittest.TestCase):
         result = model_training.train_and_evaluate(engineered, "target", ["logistic_regression", "random_forest_classifier"], fitted_models=fitted)
         artifact = model_export.export_model(fitted[result["best_model"]], engineered, "target", steps, result, "dataset", "run", source_df=raw)
         with zipfile.ZipFile(model_export.artifact_path(artifact["artifact_id"])) as archive:
-            self.assertEqual(set(archive.namelist()), {"model.joblib", "metadata.json", "input_schema.json", "requirements.txt", "README.md", "daisy_predict.py"})
+            self.assertEqual(set(archive.namelist()), {"model.joblib", "metadata.json", "input_schema.json", "requirements.txt", "README.md", "daisy_predict.py", "checksums.json"})
             bundle = joblib.load(io.BytesIO(archive.read("model.joblib")))
             metadata = json.loads(archive.read("metadata.json"))
             self.assertEqual(metadata["model"], result["best_model"])
@@ -80,6 +80,8 @@ class ModelExportTests(unittest.TestCase):
         self.assertGreater(transformed["amount"].iloc[0], 50)  # saved scale, not refit to this batch
         self.assertEqual(len(predict(bundle, new)), 3)
         standalone = Path(self.directory.name) / "standalone"
+        self.assertTrue(verify_package(standalone / "model.joblib"))
+        np.testing.assert_array_equal(predict(load_model(standalone / "model.joblib"), new), predict(bundle, new))
         new.to_csv(standalone / "new.csv", index=False)
         completed = subprocess.run([sys.executable, "daisy_predict.py", "new.csv", "predictions.csv"], cwd=standalone, capture_output=True, text=True, timeout=45)
         self.assertEqual(completed.returncode, 0, completed.stderr)
