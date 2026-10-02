@@ -49,7 +49,7 @@ MAX_CLASSIFICATION_UNIQUE_ABS = 20
 MAX_CLASSIFICATION_UNIQUE_RATIO = 0.05
 
 
-def detect_problem_type(df: pd.DataFrame, target_column: str) -> dict:
+def detect_problem_type(df: pd.DataFrame, target_column: str, problem_type_override=None) -> dict:
     """The 'sense' step. Deterministic — Gemini never decides this."""
     if target_column not in df.columns:
         raise ValueError(f"Target column '{target_column}' not found in dataset")
@@ -77,6 +77,12 @@ def detect_problem_type(df: pd.DataFrame, target_column: str) -> dict:
     else:
         problem_type = "classification"
 
+    if problem_type_override not in (None, "auto", "classification", "regression"):
+        raise ValueError("Unsupported task type")
+    if problem_type_override in {"classification", "regression"}:
+        problem_type = problem_type_override
+    if problem_type == "regression" and not pd.api.types.is_numeric_dtype(target):
+        raise ValueError("Regression needs a numeric target. Review the column type first.")
     result: dict[str, Any] = {
         "target_column": target_column,
         "problem_type": problem_type,
@@ -99,11 +105,11 @@ def detect_problem_type(df: pd.DataFrame, target_column: str) -> dict:
     return result
 
 
-def profile_for_model_selection(df: pd.DataFrame, target_column: str) -> dict:
+def profile_for_model_selection(df: pd.DataFrame, target_column: str, problem_type_override=None) -> dict:
     """Combines the deterministic target analysis with basic feature-space
     stats Gemini needs to reason about candidate suitability (e.g. dataset
     size affects whether KNN/SVM are practical)."""
-    problem_info = detect_problem_type(df, target_column)
+    problem_info = detect_problem_type(df, target_column, problem_type_override)
     feature_columns = [c for c in df.columns if c != target_column]
     numeric_features = [c for c in feature_columns if pd.api.types.is_numeric_dtype(df[c])]
 

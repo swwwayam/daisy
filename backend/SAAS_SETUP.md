@@ -122,6 +122,18 @@ because joblib/pickle deserialization can execute code.
 
 ## Score interpretation
 
+Reviewed studies now confirm the target, task, winning metric and split before
+cleaning. Automatic task suggestions are resolved from reserved training rows and
+can be overridden by choosing classification or regression. Supported splits are
+random, stratified labels, grouped entities, and chronological timestamps; group
+and timestamp ties do not cross folds. Split columns are excluded from model inputs.
+Group/time folds approximate 60/20/20 and can have different row proportions.
+Keep/remove exact duplicates is explicit. Missing targets are excluded, never imputed
+for training. Cleaning cannot modify the fixed target or contradict duplicate policy.
+Classification reports include macro F1, balanced accuracy and per-class diagnostics;
+regression selection supports RMSE, MAE and R². The approved configuration is exported.
+Updating review creates a new dataset version; changing target later is rejected.
+
 The application reserves a reproducible 60/20/20 random train/validation/test split.
 Cleaning, feature, and model recommendation profiles use training rows only;
 full-dataset EDA remains descriptive. Learned preprocessing is refitted on the

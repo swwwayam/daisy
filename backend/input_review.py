@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from typing import Literal
 
 from daisy_predict import normalize_input
+from training_config import TrainingConfig
 
 
 class InputReview(BaseModel):
@@ -14,9 +15,10 @@ class InputReview(BaseModel):
     column_tokens: dict[str, list[str]] = Field(default_factory=dict)
     column_types: dict[str, Literal["auto", "numeric", "text", "datetime"]] = Field(default_factory=dict)
     blank_is_missing: bool = True
+    training_config: TrainingConfig | None = None
 
     def policy(self):
-        return {"type": "normalize", **self.model_dump()}
+        return {"type": "normalize", **self.model_dump(exclude={"training_config"})}
 
 
 def read_source(content, review=None):

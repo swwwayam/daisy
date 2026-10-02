@@ -257,6 +257,7 @@ export function useDaisyRun() {
     return run("dataset", () => daisy.reviewDataset(s.originalDatasetId as string, policy), result => setS(prev => ({
       ...initialState, workflowId: prev.workflowId, originalDatasetId: prev.originalDatasetId,
       currentDatasetId: result.dataset_id ?? null, upload: result,
+      targetColumn: result.training_config?.target_column ?? null,
       engineeredColumns: [...(result.numerical_columns ?? []), ...(result.categorical_columns ?? [])],
       status: { ...initialStatus, dataset: "done", cleaning: "available" },
     })));

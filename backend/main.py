@@ -70,6 +70,7 @@ import model_training
 import model_export
 from model_catalog import catalog, row_limit
 from input_review import InputReview, read_source
+from training_config import TrainingConfig, configured_partitions
 from resource_access import ResourceOwners
 from persistence import build_store, PersistenceError, json_safe
 from job_queue import build_queue, QueueError
@@ -282,7 +283,7 @@ def agent_planning_frame(dataset_id: str, owner_id: str, target_column=None):
     # Tiny datasets can be inspected but cannot produce a scored training run.
     if len(source.drop_duplicates()) < 15:
         return require_owned_dataset(dataset_id, owner_id)
-    train = model_training.planning_frame(source)
+    train = model_training.planning_frame(source, configuration=dataset_training_config(dataset_id, owner_id, target_column))
     try:
         frame, _, _ = model_training._fit_recorded_preprocessing(train, DATASET_TRANSFORMS.get(dataset_id, []), target_column)
         return frame
@@ -644,6 +645,14 @@ def interpreted_source(dataset_id, owner):
     return read_source(source_bytes(root, owner), InputReview(**settings))[0]
 
 
+def dataset_training_config(dataset_id, owner, target_column=None):
+    require_owned_dataset(dataset_id, owner)
+    config = DATASET_DETAILS.get(dataset_id, {}).get("training_config")
+    if config and target_column is not None and config["target_column"] != target_column:
+        raise HTTPException(status_code=409, detail="Target is fixed by data review. Update the review to start a new study.")
+    return config
+
+
 @app.get("/dataset/{dataset_id}/source/download")
 def download_original_csv(dataset_id: str, request: Request):
     return StreamingResponse(io.BytesIO(source_bytes(dataset_id, authenticated_user_id(request))),
@@ -656,14 +665,30 @@ def review_dataset(dataset_id: str, req: InputReview, request: Request):
     root = owned_source_dataset(dataset_id, owner)
     try:
         frame, policy = read_source(source_bytes(root, owner), req)
+        if req.training_config:
+            config = req.training_config.model_dump()
+            _, train_ids, _, _ = configured_partitions(frame, config)
+            problem_type = model_selection.detect_problem_type(frame.loc[train_ids], config["target_column"], config["problem_type"])["problem_type"]
+            req.training_config = TrainingConfig(**{**config, "problem_type": problem_type})
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail=f"Review could not be applied: {exc}") from exc
     check_training_limits(frame, [])
-    reviewed = create_derived_dataset(root, owner, frame, [policy])
+    source_dtypes = {str(column): str(dtype) for column, dtype in frame.dtypes.items()}
+    steps = [policy]
+    if req.training_config:
+        config = req.training_config.model_dump()
+        split_column = config.get("group_column") if config["split_strategy"] == "group" else config.get("time_column") if config["split_strategy"] == "time" else None
+        if split_column:
+            frame = frame.drop(columns=[split_column])
+            steps.append({"type": "drop_column", "column": split_column})
+    reviewed = create_derived_dataset(root, owner, frame, steps)
     DATASET_DETAILS[reviewed]["input_policy"] = policy
-    persist_dataset(reviewed)
+    DATASET_DETAILS[reviewed]["training_config"] = req.training_config.model_dump() if req.training_config else None
+    persist_dataset(reviewed, update_settings=True)
     return {**build_schema_report(frame), "dataset_id": reviewed, "source_dataset_id": root,
-            "filename": DATASET_DETAILS.get(root, {}).get("filename"), "review_available": True, "input_policy": policy}
+            "filename": DATASET_DETAILS.get(root, {}).get("filename"), "review_available": True, "input_policy": policy,
+            "source_column_dtypes": source_dtypes,
+            "training_config": DATASET_DETAILS[reviewed]["training_config"]}
 
 
 class ChatRequest(BaseModel):
@@ -925,9 +950,13 @@ def run_data_cleaning_agent(req: CleaningRequest, request: Request):
 
     # 3. ACT — pandas executes the plan, step by step, on a copy of the data
     fitted_steps = list(DATASET_TRANSFORMS.get(req.dataset_id, []))
-    cleaned_df, steps = agents.apply_cleaning_plan(
-        df, policy_actions + plan["actions"], fitted_steps=fitted_steps
-    )
+    config = dataset_training_config(req.dataset_id, owner_id)
+    if config and config["target_column"] in req.zero_as_missing:
+        raise HTTPException(status_code=400, detail="Target zero values cannot be changed during feature cleaning. Review target missing markers before creating the study.")
+    protected = [action for action in plan["actions"] if config and
+                 (action.get("column") == config["target_column"] or (action.get("type") == "drop_duplicates" and config["duplicate_policy"] == "keep"))]
+    cleaned_df, steps = agents.apply_cleaning_plan(df, policy_actions + [action for action in plan["actions"] if action not in protected], fitted_steps=fitted_steps)
+    steps.extend({**action, "status": "skipped", "message": "Protected by the user-approved target or duplicate policy."} for action in protected)
 
     cleaned_id = create_derived_dataset(req.dataset_id, owner_id, cleaned_df, fitted_steps)
 
@@ -1197,7 +1226,8 @@ def run_model_selection_agent(req: ModelSelectionRequest, request: Request):
     with Timer() as timer:
         # 1. SENSE (deterministic)
         try:
-            profile = model_selection.profile_for_model_selection(agent_planning_frame(req.dataset_id, owner_id, req.target_column), req.target_column)
+            config = dataset_training_config(req.dataset_id, owner_id, req.target_column)
+            profile = model_selection.profile_for_model_selection(agent_planning_frame(req.dataset_id, owner_id, req.target_column), req.target_column, config.get("problem_type") if config else None)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -1365,6 +1395,7 @@ def execute_model_training(req: ModelTrainingRequest, request: Request):
                 raw_df=interpreted_source(req.dataset_id, owner_id),
                 preprocessing_steps=DATASET_TRANSFORMS.get(req.dataset_id, []),
                 fitted_preprocessing=fitted_preprocessing,
+                configuration=dataset_training_config(req.dataset_id, owner_id, req.target_column),
             )
         except model_training.TrainingDataError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -1402,9 +1433,9 @@ def execute_model_training(req: ModelTrainingRequest, request: Request):
         },
         reasoning=(
             f"Trained {len(req.candidate_models)} candidate model(s) on an "
-            "60/20/20 train/validation/test split. "
+            f"{result['split_strategy']} train/validation/test split. "
             f"Best model selected by {result['primary_metric']} "
-            f"({'higher' if result['problem_type'] == 'classification' else 'lower'} is better) "
+            f"({'lower' if result['primary_metric'] in {'rmse', 'mae'} else 'higher'} is better) "
             "on validation scores. Only the winner is measured on the final test fold. "
             "Preprocessing was fitted on the training fold only, and this is an "
             "objective metric comparison rather than an AI judgment call."
@@ -1415,6 +1446,8 @@ def execute_model_training(req: ModelTrainingRequest, request: Request):
             "primary_metric": result["primary_metric"],
             "best_model": result["best_model"],
             "selection_scope": result["selection_scope"],
+            "training_config": result.get("training_config"),
+            "split_strategy": result["split_strategy"],
             "final_test_metrics": result["final_test_metrics"],
             "baseline_test_metrics": result["baseline_test_metrics"],
             "n_validation": result["n_validation"],

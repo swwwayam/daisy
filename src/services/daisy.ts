@@ -68,6 +68,8 @@ export interface DatasetSummary {
   input_policy?: InputPolicy;
   column_dtypes?: Record<string, string>;
   source_dataset_id?: string;
+  training_config?: TrainingConfig | null;
+  source_column_dtypes?: Record<string, string>;
   rows?: number;
   columns?: number;
   numerical_columns?: string[];
@@ -97,6 +99,17 @@ export interface InputPolicy {
   column_tokens: Record<string, string[]>;
   column_types: Record<string, "auto" | "numeric" | "text" | "datetime">;
   blank_is_missing: boolean;
+  training_config?: TrainingConfig | null;
+}
+
+export interface TrainingConfig {
+  target_column: string;
+  problem_type: "auto" | "classification" | "regression";
+  split_strategy: "random" | "stratified" | "group" | "time";
+  group_column: string | null;
+  time_column: string | null;
+  primary_metric: "auto" | "f1_weighted" | "f1_macro" | "accuracy" | "balanced_accuracy" | "rmse" | "mae" | "r2";
+  duplicate_policy: "keep" | "drop";
 }
 
 export interface AgentResult extends Dict {
@@ -128,6 +141,8 @@ export interface TrainingResult extends AgentResult {
     model_artifact?: { artifact_id: string; filename: string; model: string; input_columns: string[] } | null;
     export_error?: string | null;
     selection_scope?: string;
+    training_config?: TrainingConfig | null;
+    split_strategy?: string;
     final_test_metrics?: Dict | null;
     baseline_test_metrics?: Dict | null;
     warnings?: Dict;

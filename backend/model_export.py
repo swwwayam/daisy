@@ -143,6 +143,8 @@ def export_model(estimator, df, target_column, steps, training_result, dataset_i
                 "validation_index_hash": training_result.get("validation_index_hash"),
                 "n_validation": training_result.get("n_validation"),
                 "selection_scope": training_result.get("selection_scope", "test"),
+                "training_config": training_result.get("training_config"),
+                "split_strategy": training_result.get("split_strategy"),
                 "final_test_metrics": training_result.get("final_test_metrics"),
                 "baseline_test_metrics": training_result.get("baseline_test_metrics"),
                 "leakage_free_preprocessing": training_result.get("leakage_free_preprocessing", False),

@@ -49,6 +49,8 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
     confusion_matrix,
+    balanced_accuracy_score,
+    classification_report,
 )
 from sklearn.model_selection import train_test_split
 from sklearn.dummy import DummyClassifier, DummyRegressor
@@ -274,6 +276,9 @@ def _classification_metrics(y_true, y_pred, y_proba) -> dict:
         "precision_weighted": round(float(precision_score(y_true, y_pred, average="weighted", zero_division=0)), 4),
         "recall_weighted": round(float(recall_score(y_true, y_pred, average="weighted", zero_division=0)), 4),
         "f1_weighted": round(float(f1_score(y_true, y_pred, average="weighted", zero_division=0)), 4),
+        "f1_macro": round(float(f1_score(y_true, y_pred, average="macro", zero_division=0)), 4),
+        "balanced_accuracy": round(float(balanced_accuracy_score(y_true, y_pred)), 4),
+        "per_class": {key: value for key, value in classification_report(y_true, y_pred, output_dict=True, zero_division=0).items() if key not in {"accuracy", "macro avg", "weighted avg"}},
     }
     # ROC-AUC only well-defined for binary classification with predicted probabilities
     if y_proba is not None and len(set(y_true)) == 2:
@@ -293,8 +298,14 @@ def _regression_metrics(y_true, y_pred) -> dict:
     }
 
 
-def reserved_partitions(source, test_size=0.2, random_state=42):
+def reserved_partitions(source, test_size=0.2, random_state=42, configuration=None):
     """Reserve folds before target-dependent decisions, including AI planning."""
+    if configuration:
+        from training_config import configured_partitions
+        try:
+            return configured_partitions(source, configuration, random_state)
+        except (ValueError, TypeError) as exc:
+            raise TrainingDataError(f"Study split is invalid: {exc}") from exc
     source = source.drop_duplicates()
     if not source.index.is_unique or len(source) < 15:
         raise TrainingDataError("At least 15 uniquely indexed rows are needed for train/validation/test evaluation")
@@ -306,13 +317,13 @@ def reserved_partitions(source, test_size=0.2, random_state=42):
     return source, train, validation, test
 
 
-def planning_frame(source, test_size=0.2, random_state=42):
-    source, train, _, _ = reserved_partitions(source, test_size, random_state)
+def planning_frame(source, test_size=0.2, random_state=42, configuration=None):
+    source, train, _, _ = reserved_partitions(source, test_size, random_state, configuration)
     return source.loc[train].copy()
 
 
-def prepare_three_way_data(df, target_column, problem_type, test_size, random_state, raw_df=None, preprocessing_steps=None):
-    source, train_ids, validation_ids, test_ids = reserved_partitions(raw_df if raw_df is not None else df, test_size, random_state)
+def prepare_three_way_data(df, target_column, problem_type, test_size, random_state, raw_df=None, preprocessing_steps=None, configuration=None):
+    source, train_ids, validation_ids, test_ids = reserved_partitions(raw_df if raw_df is not None else df, test_size, random_state, configuration)
     if target_column not in source:
         raise TrainingDataError(f"Target column '{target_column}' not found in dataset")
     # Exclude missing targets after partitioning so planning cannot see test rows.
@@ -350,7 +361,7 @@ def prepare_three_way_data(df, target_column, problem_type, test_size, random_st
               "train_index_hash": _hash_index(X_train.index),
               "validation_index_hash": _hash_index(X_validation.index),
               "test_index_hash": _hash_index(X_test.index),
-              "split_strategy": "random_train_validation_test", "leakage_free_preprocessing": raw_df is not None}
+              "split_strategy": configuration["split_strategy"] if configuration else "random_train_validation_test", "leakage_free_preprocessing": raw_df is not None}
     return X_train, X_validation, X_test, y_train, validation_raw[target_column], test_raw[target_column], warnings, fitted, schema
 
 
@@ -364,10 +375,11 @@ def train_and_evaluate(
     raw_df: pd.DataFrame | None = None,
     preprocessing_steps: list[dict] | None = None,
     fitted_preprocessing: list | None = None,
+    configuration: dict | None = None,
 ) -> dict:
     """The 'act' step. Real fit/predict for every candidate. Each model's
     failure is isolated — reported, not fatal to the whole run."""
-    problem_info = detect_problem_type(planning_frame(raw_df if raw_df is not None else df, test_size, random_state), target_column)
+    problem_info = detect_problem_type(planning_frame(raw_df if raw_df is not None else df, test_size, random_state, configuration), target_column, configuration.get("problem_type") if configuration else None)
     problem_type = problem_info["problem_type"]
 
     if not candidate_models:
@@ -398,6 +410,7 @@ def train_and_evaluate(
         random_state,
         raw_df=raw_df,
         preprocessing_steps=preprocessing_steps,
+        configuration=configuration,
     )
     if fitted_preprocessing is not None:
         fitted_preprocessing.extend(fitted_steps)
@@ -430,8 +443,12 @@ def train_and_evaluate(
         entry["training_time_seconds"] = round(time.time() - start, 4)
         results.append(entry)
 
-    primary_metric = PRIMARY_METRIC[problem_type]
-    higher_is_better = HIGHER_IS_BETTER[problem_type]
+    primary_metric = configuration.get("primary_metric", "auto") if configuration else "auto"
+    if primary_metric == "auto": primary_metric = PRIMARY_METRIC[problem_type]
+    allowed_metrics = {"f1_weighted", "f1_macro", "accuracy", "balanced_accuracy"} if problem_type == "classification" else {"rmse", "mae", "r2"}
+    if primary_metric not in allowed_metrics:
+        raise TrainingDataError("Selected metric does not match the detected task type. Choose the task explicitly during review.")
+    higher_is_better = primary_metric not in {"rmse", "mae"}
     successful = [r for r in results if r["status"] == "success" and primary_metric in r["metrics"]]
 
     best_model = None
@@ -477,6 +494,7 @@ def train_and_evaluate(
         "n_validation": len(X_validation),
         "selection_scope": "validation",
         "split_strategy": schema["split_strategy"],
+        "training_config": configuration,
         "final_test_metrics": final_test_metrics,
         "baseline_test_metrics": baseline_metrics,
         "evaluation_data": evaluation_data,

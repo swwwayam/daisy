@@ -29,8 +29,8 @@ def private_profile(profile, columns, sensitive_columns=(), strip_narratives=Fal
             for key, item in value.items():
                 if key in VALUE_KEYS or (strip_narratives and key in {"summary", "reasoning", "message", "observations"}):
                     continue
-                if key == "class_balance" and isinstance(item, dict):
-                    out[key] = {f"class_{i+1}": amount for i, amount in enumerate(item.values())}
+                if key in {"class_balance", "per_class"} and isinstance(item, dict):
+                    out[key] = {f"class_{i+1}": visit(amount) for i, amount in enumerate(item.values())}
                 elif key == "labels":
                     out[key] = [f"class_{i+1}" for i in range(len(item))]
                 elif key in sensitive and isinstance(item, dict):

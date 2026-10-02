@@ -293,7 +293,7 @@ function TargetPanel({ run }: { run: Run }) {
           <input className="ws-input" placeholder="Filter columns…" value={q} onChange={(e) => setQ(e.target.value)} />
           <div className="col-grid">
             {filtered.map((c) => (
-              <button key={c} className={`col-chip ${state.targetColumn === c ? "sel" : ""}`} onClick={() => run.selectTarget(c)}>
+              <button key={c} disabled={!!state.upload?.training_config && c !== state.upload.training_config.target_column} className={`col-chip ${state.targetColumn === c ? "sel" : ""}`} onClick={() => run.selectTarget(c)}>
                 {c}
               </button>
             ))}
@@ -386,7 +386,7 @@ function TrainingPanel({ run }: { run: Run }) {
               ))}
             </div>
             <div className="test-size">
-              <p>60% training · 20% validation · 20% final test. Folds are reserved before automated cleaning and feature decisions.</p>
+              <p>{state.upload?.training_config?.split_strategy ?? "Random"} split · winner by {state.upload?.training_config?.primary_metric ?? "task default"}. Approximately 60/20/20; groups and timestamp ties stay together. The study was agreed before automated decisions.</p>
             </div>
             <button className="pill pill-solid" disabled={picked.length === 0} onClick={() => run.runTraining(picked, testSize)}>
               Train {picked.length} model{picked.length === 1 ? "" : "s"} →
