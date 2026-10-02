@@ -42,6 +42,7 @@ import os
 import re
 import uuid
 from time import perf_counter
+from typing import Literal
 
 import pandas as pd
 import numpy as np
@@ -264,6 +265,19 @@ def owned_source_dataset(dataset_id: str, owner_id: str) -> str:
         if current not in DATASET_PARENTS:
             return current
         current = DATASET_PARENTS[current]
+
+
+def agent_planning_frame(dataset_id: str, owner_id: str, target_column=None):
+    source = require_owned_dataset(owned_source_dataset(dataset_id, owner_id), owner_id)
+    # Tiny datasets can be inspected but cannot produce a scored training run.
+    if len(source.drop_duplicates()) < 15:
+        return require_owned_dataset(dataset_id, owner_id)
+    train = model_training.planning_frame(source)
+    try:
+        frame, _, _ = model_training._fit_recorded_preprocessing(train, DATASET_TRANSFORMS.get(dataset_id, []), target_column)
+        return frame
+    except model_training.TrainingDataError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 def save_pipeline_result(dataset_id: str, stage: str, result: dict, child_dataset_id: str | None = None):
@@ -764,7 +778,9 @@ def run_data_cleaning_agent(req: CleaningRequest, request: Request):
     semantic_df, _ = agents.apply_cleaning_plan(df, policy_actions)
 
     # 1. SENSE — profile the data (stats only, never raw rows go to the LLM)
-    profile = agents.profile_dataframe(semantic_df)
+    planning_df = agent_planning_frame(req.dataset_id, owner_id)
+    planning_df, _ = agents.apply_cleaning_plan(planning_df, policy_actions)
+    profile = agents.profile_dataframe(planning_df)
 
     # 2. REASON — DeepSeek returns a strict-JSON cleaning plan
     prompt = agents.build_cleaning_prompt(profile)
@@ -894,7 +910,7 @@ def run_feature_engineering_agent(req: FeatureEngineeringRequest, request: Reque
 
         # 1. SENSE
         profile = feature_engineering.profile_for_feature_engineering(
-            df,
+            agent_planning_frame(req.dataset_id, owner_id, req.target_column),
             req.target_column
         )
 
@@ -927,11 +943,17 @@ def run_feature_engineering_agent(req: FeatureEngineeringRequest, request: Reque
 
         # 4. FALLBACK — deterministic safety net for anything Nemotron's plan
         # didn't address.
-        engineered_df, fallback_steps = feature_engineering.apply_fallback_encoding(
-            engineered_df,
-            req.target_column,
-            fitted_steps=fitted_steps,
+        planning_engineered, _ = feature_engineering.apply_feature_engineering_plan(
+            agent_planning_frame(req.dataset_id, owner_id, req.target_column), plan["actions"], req.target_column,
         )
+        fallback_specifications = []
+        feature_engineering.apply_fallback_encoding(planning_engineered, req.target_column, fitted_steps=fallback_specifications)
+        fallback_actions = [{key: step[key] for key in ("type", "column", "strategy")} for step in fallback_specifications]
+        engineered_df, fallback_steps = feature_engineering.apply_feature_engineering_plan(
+            engineered_df, fallback_actions, req.target_column, fitted_steps=fitted_steps,
+        )
+        for step in fallback_steps:
+            step["reasoning"] = "Fallback encoding strategy chosen using training rows only."
 
         steps = steps + fallback_steps
 
@@ -1009,7 +1031,8 @@ def run_model_selection_agent(req: ModelSelectionRequest, request: Request):
     a validation guardrail strips out anything it invents that isn't in
     that vocabulary — this plays the same safety-net role the 'Act' step
     plays in the data-transforming agents."""
-    df = require_owned_dataset(req.dataset_id, authenticated_user_id(request))
+    owner_id = authenticated_user_id(request)
+    df = require_owned_dataset(req.dataset_id, owner_id)
     if ai_client is None:
         raise HTTPException(
             status_code=503,
@@ -1021,7 +1044,7 @@ def run_model_selection_agent(req: ModelSelectionRequest, request: Request):
     with Timer() as timer:
         # 1. SENSE (deterministic)
         try:
-            profile = model_selection.profile_for_model_selection(df, req.target_column)
+            profile = model_selection.profile_for_model_selection(agent_planning_frame(req.dataset_id, owner_id, req.target_column), req.target_column)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -1084,7 +1107,7 @@ class ModelTrainingRequest(BaseModel):
     dataset_id: str
     target_column: str
     candidate_models: list[str] = Field(min_length=1, max_length=3)
-    test_size: float = Field(default=0.2, ge=0.1, le=0.4)
+    test_size: Literal[0.2] = 0.2
     workflow_id: str | None = None
 
 
@@ -1203,10 +1226,11 @@ def execute_model_training(req: ModelTrainingRequest, request: Request):
         },
         reasoning=(
             f"Trained {len(req.candidate_models)} candidate model(s) on an "
-            f"{int((1 - req.test_size) * 100)}/{int(req.test_size * 100)} train/test split. "
+            "60/20/20 train/validation/test split. "
             f"Best model selected by {result['primary_metric']} "
             f"({'higher' if result['problem_type'] == 'classification' else 'lower'} is better) "
-            "— preprocessing was fitted on the training fold only, and this is an "
+            "on validation scores. Only the winner is measured on the final test fold. "
+            "Preprocessing was fitted on the training fold only, and this is an "
             "objective metric comparison rather than an AI judgment call."
         ),
         actions=result["results"],
@@ -1214,6 +1238,11 @@ def execute_model_training(req: ModelTrainingRequest, request: Request):
             "problem_type": result["problem_type"],
             "primary_metric": result["primary_metric"],
             "best_model": result["best_model"],
+            "selection_scope": result["selection_scope"],
+            "final_test_metrics": result["final_test_metrics"],
+            "baseline_test_metrics": result["baseline_test_metrics"],
+            "n_validation": result["n_validation"],
+            "warnings": result["warnings"],
             "model_artifact": artifact,
             "export_error": export_error,
         },
@@ -1235,6 +1264,9 @@ def execute_model_training(req: ModelTrainingRequest, request: Request):
             "models_succeeded": sum(1 for r in result["results"] if r["status"] == "success"),
             "models_failed": sum(1 for r in result["results"] if r["status"] == "failed"),
             "results": result.get("results", []),
+            "selection_scope": "validation",
+            "final_test_metrics": result.get("final_test_metrics"),
+            "baseline_test_metrics": result.get("baseline_test_metrics"),
         },
     )
 
@@ -1269,7 +1301,7 @@ class EvaluationRequest(BaseModel):
     dataset_id: str
     target_column: str
     model_name: str
-    test_size: float = 0.2
+    test_size: Literal[0.2] = 0.2
     workflow_id: str | None = None
 
 

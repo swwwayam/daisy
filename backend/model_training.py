@@ -50,6 +50,7 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.model_selection import train_test_split
+from sklearn.dummy import DummyClassifier, DummyRegressor
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC, SVR
 
@@ -109,7 +110,7 @@ def _fit_recorded_preprocessing(
         if kind == "normalize":
             fitted.append({"type": "normalize"})
             continue
-        if column == target_column or kind == "drop_rows_missing_target":
+        if (target_column is not None and column == target_column) or kind == "drop_rows_missing_target":
             ignored_target_steps.append(kind)
             continue
 
@@ -299,6 +300,67 @@ def _regression_metrics(y_true, y_pred) -> dict:
     }
 
 
+def reserved_partitions(source, test_size=0.2, random_state=42):
+    """Reserve folds before target-dependent decisions, including AI planning."""
+    source = source.drop_duplicates()
+    if not source.index.is_unique or len(source) < 15:
+        raise TrainingDataError("At least 15 uniquely indexed rows are needed for train/validation/test evaluation")
+    try:
+        development, test = train_test_split(source.index, test_size=test_size, random_state=random_state)
+        train, validation = train_test_split(development, test_size=0.25, random_state=random_state)
+    except ValueError as exc:
+        raise TrainingDataError(f"Could not reserve evaluation folds: {exc}") from exc
+    return source, train, validation, test
+
+
+def planning_frame(source, test_size=0.2, random_state=42):
+    source, train, _, _ = reserved_partitions(source, test_size, random_state)
+    return source.loc[train].copy()
+
+
+def prepare_three_way_data(df, target_column, problem_type, test_size, random_state, raw_df=None, preprocessing_steps=None):
+    source, train_ids, validation_ids, test_ids = reserved_partitions(raw_df if raw_df is not None else df, test_size, random_state)
+    if target_column not in source:
+        raise TrainingDataError(f"Target column '{target_column}' not found in dataset")
+    # Exclude missing targets after partitioning so planning cannot see test rows.
+    train_raw = source.loc[train_ids].dropna(subset=[target_column])
+    validation_raw = source.loc[validation_ids].dropna(subset=[target_column])
+    test_raw = source.loc[test_ids].dropna(subset=[target_column])
+    if min(len(validation_raw), len(test_raw)) < 2:
+        raise TrainingDataError("Validation and test folds need at least two labeled rows each")
+    steps = list(preprocessing_steps or [])
+    if raw_df is not None:
+        transformed, fitted, ignored = _fit_recorded_preprocessing(train_raw, steps, target_column)
+    else:
+        transformed, fitted, ignored = train_raw, steps, []
+    X_train, y_train, warnings = prepare_training_data(transformed, target_column)
+    from daisy_predict import transform
+    from model_export import required_columns
+    features = X_train.columns.tolist()
+    inputs = required_columns(features, fitted) if raw_df is not None else features
+    bundle = {"input_columns": inputs, "feature_columns": features, "target_column": target_column, "preprocessing": fitted}
+    try:
+        X_validation = transform(bundle, validation_raw) if raw_df is not None else validation_raw[features].astype(float)
+        X_test = transform(bundle, test_raw) if raw_df is not None else test_raw[features].astype(float)
+        if not np.isfinite(X_validation.to_numpy()).all() or not np.isfinite(X_test.to_numpy()).all():
+            raise ValueError("Missing or infinite held-out feature values")
+    except (TypeError, ValueError) as exc:
+        raise TrainingDataError(f"Could not transform held-out data: {exc}") from exc
+    warnings.update(target_preprocessing_ignored=sorted(set(ignored)),
+                    duplicate_rows_excluded_before_split=int(len(raw_df if raw_df is not None else df) - len(source)),
+                    rows_missing_target_excluded_before_split=int(source[target_column].isna().sum()),
+                    class_imbalance=bool(problem_type == "classification" and y_train.value_counts(normalize=True).max() >= 0.8),
+                    small_test_fold=len(X_test) < 30)
+    schema = {"feature_columns": features, "input_columns": inputs,
+              "feature_dtypes": {c: str(X_train[c].dtype) for c in features},
+              "dataset_fingerprint": _dataset_fingerprint(source),
+              "train_index_hash": _hash_index(X_train.index),
+              "validation_index_hash": _hash_index(X_validation.index),
+              "test_index_hash": _hash_index(X_test.index),
+              "split_strategy": "random_train_validation_test", "leakage_free_preprocessing": raw_df is not None}
+    return X_train, X_validation, X_test, y_train, validation_raw[target_column], test_raw[target_column], warnings, fitted, schema
+
+
 def train_and_evaluate(
     df: pd.DataFrame,
     target_column: str,
@@ -312,7 +374,7 @@ def train_and_evaluate(
 ) -> dict:
     """The 'act' step. Real fit/predict for every candidate. Each model's
     failure is isolated — reported, not fatal to the whole run."""
-    problem_info = detect_problem_type(df, target_column)
+    problem_info = detect_problem_type(planning_frame(raw_df if raw_df is not None else df, test_size, random_state), target_column)
     problem_type = problem_info["problem_type"]
 
     if not candidate_models:
@@ -335,7 +397,7 @@ def train_and_evaluate(
             f"These models don't match the detected problem type ({problem_type}): {wrong_bucket}"
         )
 
-    X_train, X_test, y_train, y_test, warnings, fitted_steps, schema = prepare_split_data(
+    X_train, X_validation, X_test, y_train, y_validation, y_test, warnings, fitted_steps, schema = prepare_three_way_data(
         df,
         target_column,
         problem_type,
@@ -348,21 +410,24 @@ def train_and_evaluate(
         fitted_preprocessing.extend(fitted_steps)
 
     results = []
+    estimators = {}
     for model_name in candidate_models:
         entry: dict[str, Any] = {"model": model_name}
         start = time.time()
         try:
             estimator = MODEL_FACTORY[model_name]()
             estimator.fit(X_train, y_train)
-            y_pred = estimator.predict(X_test)
+            y_pred = estimator.predict(X_validation)
 
             if problem_type == "classification":
-                y_proba = estimator.predict_proba(X_test) if hasattr(estimator, "predict_proba") else None
-                entry["metrics"] = _classification_metrics(y_test, y_pred, y_proba)
+                y_proba = estimator.predict_proba(X_validation) if hasattr(estimator, "predict_proba") else None
+                entry["metrics"] = _classification_metrics(y_validation, y_pred, y_proba)
             else:
-                entry["metrics"] = _regression_metrics(y_test, y_pred)
+                entry["metrics"] = _regression_metrics(y_validation, y_pred)
 
             entry["status"] = "success"
+            entry["metric_scope"] = "validation"
+            estimators[model_name] = estimator
             if fitted_models is not None:
                 fitted_models[model_name] = estimator
         except Exception as e:  # noqa: BLE001 — isolate failure to this model only
@@ -383,11 +448,31 @@ def train_and_evaluate(
             key=lambda r: r["metrics"][primary_metric] if higher_is_better else -r["metrics"][primary_metric],
         )["model"]
 
+    final_test_metrics = None
+    baseline_metrics = None
+    if best_model:
+        winner = estimators[best_model]
+        predictions = winner.predict(X_test)
+        if problem_type == "classification":
+            probabilities = winner.predict_proba(X_test) if hasattr(winner, "predict_proba") else None
+            final_test_metrics = _classification_metrics(y_test, predictions, probabilities)
+            baseline = DummyClassifier(strategy="most_frequent").fit(X_train, y_train)
+            baseline_metrics = _classification_metrics(y_test, baseline.predict(X_test), None)
+        else:
+            final_test_metrics = _regression_metrics(y_test, predictions)
+            baseline = DummyRegressor(strategy="mean").fit(X_train, y_train)
+            baseline_metrics = _regression_metrics(y_test, baseline.predict(X_test))
+
     return {
         "problem_type": problem_type,
         "primary_metric": primary_metric,
         "n_train": len(X_train),
         "n_test": len(X_test),
+        "n_validation": len(X_validation),
+        "selection_scope": "validation",
+        "split_strategy": schema["split_strategy"],
+        "final_test_metrics": final_test_metrics,
+        "baseline_test_metrics": baseline_metrics,
         "test_size": test_size,
         "random_state": random_state,
         "feature_columns": schema["feature_columns"],
@@ -396,6 +481,7 @@ def train_and_evaluate(
         "dataset_fingerprint": schema["dataset_fingerprint"],
         "train_index_hash": schema["train_index_hash"],
         "test_index_hash": schema["test_index_hash"],
+        "validation_index_hash": schema["validation_index_hash"],
         "leakage_free_preprocessing": schema["leakage_free_preprocessing"],
         "warnings": warnings,
         "results": results,

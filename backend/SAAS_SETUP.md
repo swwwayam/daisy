@@ -54,3 +54,21 @@ with identical environment settings. Do not start additional workers until host
 capacity has been planned. A cancelled job can leave a completed artifact from a
 race near publication; only the creator can access it, and retention cleanup must
 remove unreferenced artifacts.
+
+## Score interpretation
+
+The application reserves a reproducible 60/20/20 random train/validation/test split.
+Cleaning, feature, and model recommendation profiles use training rows only;
+full-dataset EDA remains descriptive. Learned preprocessing is refitted on the
+training fold. Candidate metrics are explicitly labeled validation scores. The
+winner alone receives a final test report alongside a majority-class or mean
+baseline. The exported estimator is the same fitted winner, not a new full-data
+refit. Evaluation reproduces that winner's split rather than selecting a new one.
+
+The app fixes the test fraction at 20% so changing a fraction after inspecting
+data cannot move planning rows into the test set. Missing targets are excluded
+after partitioning; duplicate rows are removed before partitioning. Class imbalance
+and small test samples produce warnings. Random splitting assumes independent
+rows. Time series and repeated entities need time/group-aware splitting before
+deployment, and manual choices based on full EDA can still bias estimates. These
+scores are not statistical confidence guarantees.

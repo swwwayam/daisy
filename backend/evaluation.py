@@ -52,7 +52,8 @@ from model_training import (
     TrainingDataError,
     _classification_metrics,
     _regression_metrics,
-    prepare_split_data,
+    prepare_three_way_data,
+    planning_frame,
 )
 
 VALID_VERDICTS = {"good", "moderate", "poor"}
@@ -79,10 +80,10 @@ def evaluate_model(
     if model_name not in MODEL_FACTORY:
         raise TrainingDataError(f"Unknown model name: {model_name}")
 
-    problem_info = detect_problem_type(df, target_column)
+    problem_info = detect_problem_type(planning_frame(raw_df if raw_df is not None else df, test_size, random_state), target_column)
     problem_type = problem_info["problem_type"]
 
-    X_train, X_test, y_train, y_test, warnings, _, _ = prepare_split_data(
+    X_train, _, X_test, y_train, _, y_test, warnings, _, _ = prepare_three_way_data(
         df,
         target_column,
         problem_type,

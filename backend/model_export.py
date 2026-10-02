@@ -139,12 +139,19 @@ def export_model(estimator, df, target_column, steps, training_result, dataset_i
                 "dataset_fingerprint": training_result.get("dataset_fingerprint"),
                 "train_index_hash": training_result.get("train_index_hash"),
                 "test_index_hash": training_result.get("test_index_hash"),
+                "validation_index_hash": training_result.get("validation_index_hash"),
+                "n_validation": training_result.get("n_validation"),
+                "selection_scope": training_result.get("selection_scope", "test"),
+                "final_test_metrics": training_result.get("final_test_metrics"),
+                "baseline_test_metrics": training_result.get("baseline_test_metrics"),
                 "leakage_free_preprocessing": training_result.get("leakage_free_preprocessing", False),
                 "python_version": platform.python_version(), "dependencies": versions,
                 "model_parameters": model_parameters,
                 "input_columns": input_columns, "feature_columns": features,
                 "preprocessing_steps": [{k: s[k] for k in ("type", "column", "strategy") if k in s} for s in steps],
-                "limitations": ["Estimator is the exact train-split model scored in training, not a refit on all rows.",
+                "limitations": ["Candidates are compared on validation scores; only the winner is scored on the final test fold.",
+                    "Random splits assume independent rows; temporal and grouped datasets need a different split strategy.",
+                    "Estimator is the exact train-split model scored in training, not a refit on all rows.",
                     "Inference preserves row count. Training-only row removal and target transforms are not replayed.",
                     "Unseen categories: one-hot -> all zeros; label -> -1; frequency -> 0.",
                     "Use only trusted joblib files; loading a pickle-based model can execute code."]}
@@ -184,8 +191,10 @@ calling the estimator directly requires already-transformed features in saved or
 ## Interpretation and trust
 
 This is the exact estimator scored during training, not a newly refitted model.
-DAISY created the train/test split before fitting imputation, scaling, and encoding;
+DAISY reserved train/validation/test folds before fitting imputation, scaling, and encoding;
 the held-out rows did not influence those learned preprocessing values.
+Candidate scores in metadata are validation scores. Only the selected winner has a
+final test score, alongside a simple baseline. Random splits assume independent rows.
 Training-only duplicate/outlier/target-missing row removal is not applied at inference.
 Target values reflect any cleaning performed on the target during the training run.
 Unseen categories map to zero one-hot columns, -1 labels, or zero frequency.

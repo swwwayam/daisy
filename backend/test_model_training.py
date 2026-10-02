@@ -13,6 +13,7 @@ from model_training import (
     TrainingDataError,
     prepare_training_data,
     train_and_evaluate,
+    reserved_partitions,
 )
 
 
@@ -113,9 +114,7 @@ class TestTrainAndEvaluateClassification:
             "city": ["A", "B"] * 30,
             "label": [0, 1] * 30,
         })
-        train_index, test_index = train_test_split(
-            raw.index, test_size=.2, random_state=42, stratify=raw["label"]
-        )
+        _, train_index, _, test_index = reserved_partitions(raw)
         held_out = test_index[0]
         raw.loc[held_out, "amount"] = 100000.0
         raw.loc[held_out, "city"] = "TEST_ONLY"

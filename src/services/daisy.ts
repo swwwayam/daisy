@@ -20,6 +20,7 @@ async function readError(res: Response): Promise<string> {
   try {
     const data = await res.json();
     if (typeof data === "string") return data;
+    if (Array.isArray(data?.detail)) return data.detail.map((issue: { msg?: string }) => issue.msg || "Invalid request").join("; ");
     return data?.detail || data?.message || data?.error || `Request failed (${res.status})`;
   } catch {
     return `Request failed (${res.status})`;
@@ -104,6 +105,10 @@ export interface TrainingResult extends AgentResult {
     problem_type?: string; primary_metric?: string; best_model?: string | null;
     model_artifact?: { artifact_id: string; filename: string; model: string; input_columns: string[] } | null;
     export_error?: string | null;
+    selection_scope?: string;
+    final_test_metrics?: Dict | null;
+    baseline_test_metrics?: Dict | null;
+    warnings?: Dict;
   };
 }
 

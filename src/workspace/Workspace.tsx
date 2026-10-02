@@ -356,7 +356,7 @@ function TrainingPanel({ run }: { run: Run }) {
   const { state, acceptedModels } = run;
   const st = state.status.training;
   const [picked, setPicked] = useState<string[]>([]);
-  const [testSize, setTestSize] = useState(0.2);
+  const testSize = 0.2;
   useEffect(() => { setPicked(acceptedModels.slice(0, 3)); }, [acceptedModels]);
 
   if (st === "idle") return <Empty>Run model selection to unlock training.</Empty>;
@@ -383,8 +383,7 @@ function TrainingPanel({ run }: { run: Run }) {
               ))}
             </div>
             <div className="test-size">
-              <label>Test size <span className="mono">{testSize.toFixed(2)}</span></label>
-              <input type="range" min={0.1} max={0.4} step={0.05} value={testSize} onChange={(e) => setTestSize(parseFloat(e.target.value))} />
+              <p>60% training · 20% validation · 20% final test. Folds are reserved before automated cleaning and feature decisions.</p>
             </div>
             <button className="pill pill-solid" disabled={picked.length === 0} onClick={() => run.runTraining(picked, testSize)}>
               Train {picked.length} model{picked.length === 1 ? "" : "s"} →
@@ -407,6 +406,11 @@ function TrainingPanel({ run }: { run: Run }) {
       </div>
       {t.reasoning && <p className="lead">{t.reasoning}</p>}
       <ModelDownload training={t} />
+      <p className="lead">Candidate metrics use validation data. The final test was reserved for the winner.</p>
+      {t.output_summary?.final_test_metrics && <div className="report-block"><h5>Winner: final test metrics</h5><MetricGrid metrics={t.output_summary.final_test_metrics} /></div>}
+      {t.output_summary?.baseline_test_metrics && <div className="report-block"><h5>Simple baseline: final test metrics</h5><MetricGrid metrics={t.output_summary.baseline_test_metrics} /></div>}
+      {t.output_summary?.warnings?.small_test_fold === true && <p role="status">This test fold has fewer than 30 rows. Treat its scores as preliminary.</p>}
+      {t.output_summary?.warnings?.class_imbalance === true && <p role="status">One class dominates the training data. Review per-class results before using this model.</p>}
       <StatChips data={t.output_summary} only={["problem_type", "primary_metric"]} />
       {parsed.length > 0 ? (
         <div className="model-grid">
