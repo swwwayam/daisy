@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   daisy,
   DaisyApiError,
@@ -10,6 +10,7 @@ import {
   type FeatureEngineeringResult,
   type ModelSelectionResult,
   type TrainingResult,
+  type SavedRun,
 } from "../services/daisy";
 
 export type StageId =
@@ -134,22 +135,55 @@ const initialState: RunState = {
 };
 
 export function useDaisyRun() {
-  const [savedRuns, setSavedRuns] = useState<{ id: string; metadata: Dict; updated_at: string }[]>([]);
+  const [savedRuns, setSavedRuns] = useState<SavedRun[]>([]);
   const [historyError, setHistoryError] = useState("");
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyDurable, setHistoryDurable] = useState<boolean | null>(null);
+  const [historyOffset, setHistoryOffset] = useState(0);
+  const [historyNextOffset, setHistoryNextOffset] = useState<number | null>(null);
+  const historyOffsetRef = useRef(0);
+  const historyBusy = useRef(false);
+  const historyRequest = useRef(0);
   const [s, setS] = useState<RunState>(initialState);
-  useEffect(() => {
-    daisy.savedRuns().then(r => setSavedRuns(r.runs)).catch(e => setHistoryError(errMsg(e)));
+
+  const loadHistory = useCallback(async (offset = 0) => {
+    if (historyBusy.current) return;
+    historyBusy.current = true;
+    const request = ++historyRequest.current;
+    setHistoryLoading(true);
+    setHistoryError("");
+    try {
+      const result = await daisy.savedRuns(offset);
+      if (request !== historyRequest.current) return;
+      setSavedRuns(result.runs);
+      setHistoryDurable(result.durable);
+      setHistoryNextOffset(result.next_offset);
+      setHistoryOffset(offset);
+      historyOffsetRef.current = offset;
+    } catch (e) {
+      if (request === historyRequest.current) setHistoryError(errMsg(e));
+    } finally {
+      if (request === historyRequest.current) {
+        historyBusy.current = false;
+        setHistoryLoading(false);
+      }
+    }
   }, []);
+
+  useEffect(() => {
+    void loadHistory();
+    return () => { ++historyRequest.current; historyBusy.current = false; };
+  }, [loadHistory]);
 
   useEffect(() => {
     if (!s.workflowId || !s.originalDatasetId || (Object.values(s.status).includes("running") && !s.trainingJobId) || s.chatBusy) return;
     const timer = window.setTimeout(() => {
       daisy.saveRun(s.workflowId as string, s).then(r => {
-        if (r.saved) daisy.savedRuns().then(history => setSavedRuns(history.runs)).catch(e => setHistoryError(errMsg(e)));
+        if (r.saved) void loadHistory(historyOffsetRef.current);
       }).catch(e => setHistoryError(errMsg(e)));
     }, 600);
     return () => window.clearTimeout(timer);
-  }, [s]);
+  }, [s, loadHistory]);
 
   const restore = useCallback(async (id: string) => {
     try {
@@ -399,5 +433,5 @@ export function useDaisyRun() {
 
   const reset = useCallback(() => setS(initialState), []);
 
-  return { state: s, savedRuns, historyError, restore, acceptedModels, upload, runCleaning, runEda, runFeature, selectTarget, runSelection, runTraining, runEvaluation, sendChat, download, reset, setStatus };
+  return { state: s, savedRuns, historyError, historyLoading, historyDurable, historyOffset, historyNextOffset, loadHistory, restore, acceptedModels, upload, runCleaning, runEda, runFeature, selectTarget, runSelection, runTraining, runEvaluation, sendChat, download, reset, setStatus };
 }

@@ -17,6 +17,23 @@ workspace saves completed state and offers a saved-run selector. New uploads,
 derived datasets, and model packages survive backend restarts. Existing in-memory
 runs are not migrated automatically; upload them again after enabling persistence.
 
+### Saved-run history
+
+`GET /runs?limit=20&offset=0` returns compact, owner-filtered summaries and a
+`next_offset` (null at the end). Pages accept 1–50 runs, with a default of 20;
+offsets must be between 0 and 100,000. Summaries include filename, dimensions,
+target, winning model, and stage status. Chat, data previews, and agent reports
+are only fetched when restoring an individual run through `GET /runs/{id}`.
+SQLite and Supabase project these fields before returning rows to the API;
+history never downloads dataset or model objects.
+
+The workspace offers newer/older pages, loading status, refresh/retry, and an
+explicit memory-mode notice. Autosaving refreshes the current page instead of
+returning to the newest page. Ordering uses last save time and ID to break ties.
+Pages are not a frozen snapshot: saves from another tab may move runs between
+pages. Refresh history to restart browsing from the latest runs. No new cloud
+migration is needed for this change; existing runtime migrations are sufficient.
+
 For development without network access, set `DAISY_PERSISTENCE=sqlite`. The default
 database is `backend/state/daisy.sqlite`; that directory is ignored by Git. Memory
 mode retains the old demo behavior and does not offer durable saved runs. Dataset

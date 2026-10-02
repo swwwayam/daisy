@@ -130,6 +130,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visibl
 .ws-intro { max-width: 1180px; margin: 0 auto; padding: 44px 40px 0; }
 .ws-intro p { text-transform: uppercase; font-size: 10px; letter-spacing: .14em; color: var(--muted); margin: 0 0 12px; }
 .ws-intro h1 { font-size: clamp(30px, 4vw, 46px); font-weight: 500; line-height: 1.1; letter-spacing: -.04em; margin: 0; }
+.saved-history { margin-top: 24px; }
+.saved-history label { display: grid; gap: 10px; max-width: 720px; color: var(--muted); font-size: 13px; }
+.saved-history select { width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.saved-history-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.ws-intro .saved-history p { text-transform: none; letter-spacing: normal; font-size: 12px; line-height: 1.6; }
 .ws .rail-wrap { margin-top: 14px; padding-top: 12px; }
 .ws .rail-wrap::before { display: none; }
 .ws .rail { justify-content: space-between; padding: 24px 0 14px; }

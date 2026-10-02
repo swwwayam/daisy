@@ -849,11 +849,18 @@ export default function Workspace({ onExit, onSignOut }: { onExit: () => void; o
       <div className="ws-intro">
         <p>Your machine-learning workspace</p>
         <h1>{run.state.upload ? "Follow your data to discovery." : "Start with a little curiosity."}</h1>
-        {run.savedRuns.length > 0 && <label>Resume a saved run <select aria-label="Resume a saved run" className="pill pill-ghost" value="" disabled={Object.values(run.state.status).includes("running")} onChange={e => { if (e.target.value) void run.restore(e.target.value); }}>
+        <div className="saved-history" aria-busy={run.historyLoading}>
+        {run.savedRuns.length > 0 && <label>Resume a saved run <select aria-label="Resume a saved run" className="pill pill-ghost" value="" disabled={run.historyLoading || Object.values(run.state.status).includes("running")} onChange={e => { if (e.target.value) void run.restore(e.target.value); }}>
           <option value="">Choose a run</option>
-          {run.savedRuns.map(saved => <option key={saved.id} value={saved.id}>{String((saved.metadata.upload as Dict | undefined)?.filename || saved.id.slice(0, 8))} · {new Date(saved.updated_at).toLocaleDateString()}</option>)}
+          {run.savedRuns.map(saved => <option key={saved.id} value={saved.id}>{saved.metadata.upload.filename || "Untitled dataset"} · {saved.id.slice(0, 8)} · {saved.metadata.bestModel || saved.metadata.targetColumn || "No model yet"} · {new Date(saved.updated_at).toLocaleDateString()}</option>)}
         </select></label>}
-        {run.historyError && <p role="status">Run history: {run.historyError}</p>}
+        <div className="saved-history-actions">
+          {run.historyOffset > 0 && <button className="pill pill-ghost" disabled={run.historyLoading} onClick={() => { void run.loadHistory(Math.max(0, run.historyOffset - 20)); }}>Newer runs</button>}
+          {run.historyNextOffset !== null && <button className="pill pill-ghost" disabled={run.historyLoading} onClick={() => { void run.loadHistory(run.historyNextOffset as number); }}>Load older runs</button>}
+          <button className="pill pill-ghost" disabled={run.historyLoading} onClick={() => { void run.loadHistory(); }}>Refresh history</button>
+        </div>
+        <p role="status" aria-live="polite">{run.historyLoading ? "Loading saved runs…" : run.historyError ? `Run history: ${run.historyError}` : run.historyDurable === false ? "Runs last for this session. Saved history requires durable storage." : run.historyDurable === true && !run.savedRuns.length ? "No saved runs on this page. Upload a dataset or refresh to see your latest runs." : run.savedRuns.length ? `Showing runs ${run.historyOffset + 1}–${run.historyOffset + run.savedRuns.length}` : ""}</p>
+        </div>
         <AIPrivacyControls run={run} />
       </div>
 

@@ -52,6 +52,17 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 /* ─── Loose response types — render defensively, only show fields that exist ─── */
 export type Dict = Record<string, unknown>;
 
+export interface SavedRun {
+  id: string;
+  updated_at: string;
+  metadata: {
+    upload: { filename: string | null; rows: number | null; columns: number | null };
+    targetColumn: string | null;
+    bestModel: string | null;
+    status: Record<string, string>;
+  };
+}
+
 export interface DatasetSummary {
   rows?: number;
   columns?: number;
@@ -136,8 +147,8 @@ export const daisy = {
       method: "PUT", headers: await authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ enabled, sensitive_columns: sensitiveColumns }),
     }));
   },
-  async savedRuns(): Promise<{ runs: { id: string; metadata: Dict; updated_at: string }[]; durable: boolean }> {
-    return json(await fetch(`${BASE_URL}/runs`, { headers: await authHeaders() }));
+  async savedRuns(offset = 0): Promise<{ runs: SavedRun[]; durable: boolean; next_offset: number | null }> {
+    return json(await fetch(`${BASE_URL}/runs?limit=20&offset=${offset}`, { headers: await authHeaders() }));
   },
 
   async saveRun(id: string, state: unknown): Promise<{ saved: boolean }> {
