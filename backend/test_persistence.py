@@ -73,3 +73,24 @@ def test_supabase_refuses_metadata_pointing_to_another_owner():
     transport = httpx.MockTransport(lambda request: httpx.Response(200, json=[{"metadata": {}, "storage_bucket": "datasets", "storage_path": "user-b/secret"}]))
     with pytest.raises(PersistenceError):
         SupabaseStore("https://example.supabase.co", "sb_secret_test", transport).get("id", "user-a", "dataset")
+
+
+@pytest.mark.parametrize("kind,metadata,expected_type,bucket", [
+    ("dataset", {"source_csv": True}, "text/csv", "datasets"),
+    ("dataset", {"steps": []}, "application/json", "datasets"),
+    ("artifact", {"artifact_id": "model"}, "application/zip", "model-artifacts"),
+])
+def test_supabase_upload_type_matches_private_bucket_policy(kind, metadata, expected_type, bucket):
+    uploaded = []
+    def handle(request):
+        if request.method == "GET":
+            return httpx.Response(200, json=[])
+        if request.url.path.startswith("/storage"):
+            assert request.url.path.startswith(f"/storage/v1/object/{bucket}/owner/id/")
+            assert request.headers["content-type"] == expected_type
+            assert request.content == b"snapshot-bytes"
+            uploaded.append(request)
+        return httpx.Response(200, json={})
+    store = SupabaseStore("https://example.supabase.co", "sb_secret_test", httpx.MockTransport(handle))
+    store.save("id", "owner", kind, metadata, b"snapshot-bytes")
+    assert len(uploaded) == 1

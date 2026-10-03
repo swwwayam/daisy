@@ -227,7 +227,8 @@ class SupabaseStore:
                 raise PersistenceError("Persisted object exceeds the 50 MB storage limit")
             bucket = "model-artifacts" if kind == "artifact" else "datasets"
             object_path = f"{quote(owner, safe='')}/{quote(identifier, safe='')}/{uuid.uuid4()}"
-            self.request("POST", f"/storage/v1/object/{bucket}/{object_path}", content=blob, headers={"Content-Type": "application/octet-stream"})
+            content_type = "application/zip" if kind == "artifact" else ("text/csv" if metadata.get("source_csv") else "application/json")
+            self.request("POST", f"/storage/v1/object/{bucket}/{object_path}", content=blob, headers={"Content-Type": content_type})
             body.update(storage_bucket=bucket, storage_path=object_path)
         try:
             if existing:

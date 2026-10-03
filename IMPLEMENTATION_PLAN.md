@@ -42,8 +42,11 @@ implementation and relevant checks pass; cloud verification is recorded separate
    quotas. Ephemeral training-serving input shift checks now use training-only
    reference summaries, minimum batch sizes, and explicit heuristic thresholds.
    Monitoring history, alerting, and deployment capacity verification remain pending.
-10. Pending: live two-account Supabase checks and deployment verification; these must
-    not be represented as passed from mocked/local tests.
+10. Partially verified on 2026-10-03: live migrations, private CSV/JSON/ZIP storage
+    round trips with temporary synthetic objects, local API/worker readiness, and
+    usage RPC reachability. Live two-account authorization, authenticated end-to-end
+    training, and deployment load/container verification remain pending; these
+    must not be represented as passed from mocked/local tests.
 
 Commits stay local unless pushing is explicitly requested. Existing features remain
 available during rollout. Optional external services must fail clearly when unconfigured.

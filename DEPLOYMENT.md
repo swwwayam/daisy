@@ -27,6 +27,9 @@ separate child process with a 10-minute deadline.
 1. Configure `backend/.env`. Set `DAISY_PERSISTENCE=sqlite` for a single-host local
    deployment or `supabase` for cloud state. Memory mode is refused in production.
 2. Apply pending Supabase migrations before choosing Supabase persistence.
+   `202610030005_storage_content_types.sql` aligns the private buckets with the
+   backend upload headers: source CSV as `text/csv`, dataset snapshots as
+   `application/json`, and trained-model packages as `application/zip`.
 3. Ensure `.env.local` contains the frontend URL and publishable key.
 4. From the repository root, on a machine with Docker Desktop:
 
@@ -77,5 +80,14 @@ using SQLite; cloud blobs and metadata need matching retention/backup policies.
 SQLite heartbeat expiry, queue races, process timeout/cancellation, real child
 training, authenticated artifact recovery and pinned installed-package consistency
 are exercised locally. Docker is not installed in the authoring environment;
-container images and compose execution have **not** been tested. Supabase migration
-execution, live RLS/OAuth, public TLS and load testing remain deployment checks.
+container images and compose execution have **not** been tested.
+
+On 2026-10-03, the linked Supabase project applied the runtime migrations,
+including the storage content-type fix. The local API reported durable storage
+and worker readiness, and the account-usage RPC responded to an empty-owner read.
+Synthetic CSV, JSON snapshot and ZIP storage round trips passed; unauthenticated
+public downloads were rejected and all temporary test objects were removed.
+These checks used no user datasets or login credentials. Live two-account
+authorization, OAuth, authenticated end-to-end training, public TLS and load
+testing remain deployment checks. Unit tests force memory persistence before
+loading the app so they cannot inherit a developer's live Supabase setting.
