@@ -42,10 +42,15 @@ def test_prediction_matches_downloaded_model_and_never_persists_inputs(tmp_path,
         assert result["diagnostics"]["unseen_category_counts"]["region"] == 1
         assert result["diagnostics"]["unseen_category_counts"]["code"] == 0
         assert result["diagnostics"]["extra_columns_ignored"] == ["unused"]
+        assert result["diagnostics"]["input_shift"]["status"] == "insufficient_rows"
         exported, _ = load_server_package(main.owned_artifact_path(artifact, "inference-owner"), artifact)
         expected = predict(exported, pd.read_csv(io.BytesIO(new_csv), dtype=str, keep_default_na=False))
         output = pd.read_csv(io.StringIO(result["prediction_csv"]))
         np.testing.assert_allclose(output.prediction, expected)
+        shifted = b"amount,code,region\n" + b"100000,001,NA\n" * 30
+        shifted_reply = client.post(f"/models/{artifact}/predict", headers=a, files={"file": ("new.csv", shifted, "text/csv")})
+        assert shifted_reply.status_code == 200, shifted_reply.text
+        assert shifted_reply.json()["diagnostics"]["input_shift"]["status"] == "review_inputs"
         assert output.input_row.tolist() == [0, 1]
         with store.connect() as db:
             assert db.execute("SELECT count(*) FROM resources").fetchone()[0] == before

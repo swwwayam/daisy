@@ -32,6 +32,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from input_shift import training_reference
 from sklearn.ensemble import (
     GradientBoostingClassifier,
     GradientBoostingRegressor,
@@ -502,6 +503,7 @@ def train_and_evaluate(
     return {
         "problem_type": problem_type,
         "primary_metric": primary_metric,
+        "training_reference": training_reference(X_train) if schema["leakage_free_preprocessing"] else None,
         "n_train": len(X_train),
         "n_test": len(X_test),
         "n_validation": len(X_validation),

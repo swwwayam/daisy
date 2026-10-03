@@ -77,6 +77,7 @@ from experiments import ExperimentRegistry, FinalizationConflict, public_record,
 from final_evaluation import load_owned_package, load_server_package, evaluate_saved_winner
 from decision_report import build_report
 import inference
+from input_shift import compare_inputs
 from model_explanations import prepare_validation, explain_validation
 from prediction_usage import PredictionUsage
 from resource_access import ResourceOwners
@@ -1598,7 +1599,10 @@ def execute_prediction(artifact_id, owner, content):
         frame = inference.read_csv(content, bundle)
         prediction_usage.reserve(resource_store, owner, len(frame))
         diagnostics = inference.diagnostics(bundle, frame)
-        values = inference.predict_csv(bundle, frame)
+        from daisy_predict import transform
+        features = transform(bundle, frame)
+        diagnostics["input_shift"] = compare_inputs(metadata.get("training_reference"), features)
+        values = inference.predict_csv(bundle, frame, features)
         if values.memory_usage(deep=True).sum() > 32 * 1024 * 1024:
             raise HTTPException(status_code=413, detail="Prediction output exceeds the 32 MiB response budget. Supply fewer rows.")
         return {"artifact_id": artifact_id, "model": metadata["model"], "rows": len(values),

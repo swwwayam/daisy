@@ -5,7 +5,7 @@ import io
 import numpy as np
 import pandas as pd
 
-from daisy_predict import normalize_input, predict
+from daisy_predict import normalize_input, transform
 
 
 def read_csv(content, bundle):
@@ -57,8 +57,9 @@ def diagnostics(bundle, frame):
             "input_rows_persisted": False}
 
 
-def predict_csv(bundle, frame):
-    predictions = predict(bundle, frame)
+def predict_csv(bundle, frame, prepared=None):
+    features = transform(bundle, frame) if prepared is None else prepared
+    predictions = pd.Series(bundle["estimator"].predict(features), index=frame.index, name="prediction")
     values = predictions.to_frame()
     # Stable positional IDs let users join results to their original CSV without
     # sending arbitrary input columns back or overwriting a feature named prediction.

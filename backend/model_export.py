@@ -145,6 +145,7 @@ def export_model(estimator, df, target_column, steps, training_result, dataset_i
                 "n_validation": training_result.get("n_validation"),
                 "selection_scope": training_result.get("selection_scope", "test"),
                 "training_config": training_result.get("training_config"),
+                "training_reference": training_result.get("training_reference"),
                 "split_strategy": training_result.get("split_strategy"),
                 "final_test_metrics": training_result.get("final_test_metrics"),
                 "baseline_test_metrics": training_result.get("baseline_test_metrics"),

@@ -179,7 +179,9 @@ export interface ExperimentRecord extends Omit<ExperimentSummary, "best_model" |
 export interface PredictionResult {
   artifact_id: string; model: string; rows: number;
   preview: Dict[]; prediction_csv: string;
-  diagnostics: { missing_values_before_imputation: Record<string, number>; unseen_category_counts: Record<string, number>; extra_columns_ignored: string[]; input_rows_persisted: boolean };
+  diagnostics: { missing_values_before_imputation: Record<string, number>; unseen_category_counts: Record<string, number>; extra_columns_ignored: string[]; input_rows_persisted: boolean;
+    input_shift?: { status: string; reason?: string; training_rows?: number; batch_rows?: number; features_checked?: number; flagged_feature_count?: number;
+      flagged_features?: { feature: string; mean_shift_in_training_std: number | null; outside_training_range_fraction: number }[]; limitations?: string } };
 }
 
 export interface ExplanationResult {

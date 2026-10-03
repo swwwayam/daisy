@@ -36,7 +36,9 @@ implementation and relevant checks pass; cloud verification is recorded separate
    a browser walkthrough and live deployment checks remain pending.
 9. Partially implemented: owner-authenticated inference by immutable artifact UUID,
    file/row/cell limits, per-process concurrency bound, and atomic rolling-day usage
-   quotas. Drift monitoring and deployment capacity verification remain pending.
+   quotas. Ephemeral training-serving input shift checks now use training-only
+   reference summaries, minimum batch sizes, and explicit heuristic thresholds.
+   Monitoring history, alerting, and deployment capacity verification remain pending.
 10. Pending: live two-account Supabase checks and deployment verification; these must
     not be represented as passed from mocked/local tests.
 

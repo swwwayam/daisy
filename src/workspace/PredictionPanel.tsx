@@ -37,6 +37,16 @@ export function PredictionPanel({ artifactId, columns }: { artifactId: string; c
       <h5>New category counts</h5><MetricGrid metrics={result.diagnostics.unseen_category_counts} />
       <p>New categories use the package's saved fallback. These counts flag unfamiliar inputs; they do not measure prediction accuracy.</p>
       {!!result.diagnostics.extra_columns_ignored.length && <p>Ignored extra columns: {result.diagnostics.extra_columns_ignored.join(", ")}</p>}
+      {result.diagnostics.input_shift && <>
+        <h5>Comparison with training inputs</h5>
+        {result.diagnostics.input_shift.reason ? <p>{result.diagnostics.input_shift.reason}</p> : <>
+          <p>{result.diagnostics.input_shift.flagged_feature_count} features flagged out of {result.diagnostics.input_shift.features_checked}. Checking a mean shift above one training standard deviation or more than 10% outside the training range.</p>
+          {!!result.diagnostics.input_shift.flagged_features?.length && <div className="preview-wrap"><table className="preview-table"><thead><tr><th>Feature</th><th>Mean shift (training std)</th><th>Outside training range</th></tr></thead>
+            <tbody>{result.diagnostics.input_shift.flagged_features.map(row => <tr key={row.feature}><td>{row.feature}</td><td>{row.mean_shift_in_training_std?.toFixed(3) ?? "Constant in training"}</td><td>{(row.outside_training_range_fraction * 100).toFixed(1)}%</td></tr>)}</tbody>
+          </table></div>}
+          <p>{result.diagnostics.input_shift.limitations}</p>
+        </>}
+      </>}
     </>}
   </details>;
 }

@@ -29,6 +29,18 @@ Unseen-category counts identify use of exported fallbacks: zero one-hot columns,
 label -1, or frequency 0. These are input diagnostics, not accuracy or drift
 measurements. Performance on genuinely new labelled data still needs evaluation.
 
+New leakage-free packages include bounded transformed-training summaries
+(mean, standard deviation, min/max, row count; no raw training rows) in metadata.
+For batches of at least 30 rows, prediction responses compare encoded features
+against that fixed reference. A mean change above one training standard deviation
+or more than 10% outside the training range flags review. Constant features use
+range checks only. At most 20 flagged features are shown, with a total count.
+Packages with more than 1000 features or legacy preprocessing return unavailable.
+These thresholds are exploratory heuristics, not significance tests, accuracy
+measurements, or a complete distribution comparison. Transformations can hide raw
+shifts. No flag does not prove the absence of drift. Reports are ephemeral; there
+is no persisted monitoring history, alerting, or automatic retraining yet.
+
 The standalone downloaded helper remains available without DAISY and is not
 subject to server quotas. New packages parse CSV values as text first, preserving
 literal categories such as NA and leading-zero identifiers. Saved policy decides
