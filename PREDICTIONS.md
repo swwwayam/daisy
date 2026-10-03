@@ -40,6 +40,9 @@ For batches of at least 30 rows, prediction responses compare encoded features
 against that fixed reference. A mean change above one training standard deviation
 or more than 10% outside the training range flags review. Constant features use
 range checks only. At most 20 flagged features are shown, with a total count.
+Moment calculations scale values before summing/squaring, so large finite inputs
+do not overflow the report. Unrepresentable standardized shifts remain flagged
+and are displayed as beyond numeric range, rather than serialized as infinity.
 Packages with more than 1000 features or legacy preprocessing return unavailable.
 These thresholds are exploratory heuristics, not significance tests, accuracy
 measurements, or a complete distribution comparison. Transformations can hide raw
