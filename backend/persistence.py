@@ -60,6 +60,9 @@ def run_summary(row):
 class MemoryStore:
     enabled = False
 
+    def probe(self):
+        return True
+
     def save(self, identifier, owner, kind, metadata, blob=None):
         pass
 
@@ -79,6 +82,11 @@ class MemoryStore:
 class SQLiteStore:
     """Development persistence with the same owner boundary as the cloud store."""
     enabled = True
+
+    def probe(self):
+        with self.connect() as db:
+            db.execute("SELECT 1 FROM resources LIMIT 1").fetchone()
+        return True
 
     def __init__(self, path):
         self.path = str(path)
@@ -181,6 +189,10 @@ class SQLiteStore:
 
 class SupabaseStore:
     enabled = True
+
+    def probe(self):
+        self.request("GET", "/rest/v1/daisy_resources", params={"select": "id", "limit": "0"})
+        return True
 
     def __init__(self, url, key, transport=None):
         if not url or not key:

@@ -6,6 +6,11 @@ import subprocess
 import sys
 import tempfile
 import time
+import socket
+
+
+def worker_identity():
+    return os.getenv("DAISY_WORKER_ID") or socket.gethostname()
 
 
 def execute_file(job_path, result_path):
@@ -14,7 +19,8 @@ def execute_file(job_path, result_path):
     job = json.loads(Path(job_path).read_text(encoding="utf-8"))
     request = Request({"type": "http", "state": {"user": {"id": job["owner_id"]}}})
     try:
-        result = main.execute_model_training(main.ModelTrainingRequest(**job["payload"]), request)
+        with main.DATASETS.lease():
+            result = main.execute_model_training(main.ModelTrainingRequest(**job["payload"]), request)
         out = {"result": result}
     except Exception:
         import logging
@@ -23,7 +29,7 @@ def execute_file(job_path, result_path):
     Path(result_path).write_text(json.dumps(out, allow_nan=False), encoding="utf-8")
 
 
-def process_job(queue, job, timeout=600, runner=subprocess.Popen):
+def process_job(queue, job, timeout=600, runner=subprocess.Popen, worker_id=None):
     """Cancellation and timeout terminate the fit instead of abandoning a thread."""
     identifier, owner = job["id"], job["owner_id"]
     if queue.get(identifier, owner)["status"] != "running":
@@ -34,8 +40,12 @@ def process_job(queue, job, timeout=600, runner=subprocess.Popen):
         env = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1")
         process = runner([sys.executable, str(Path(__file__).resolve()), "--execute", str(input_path), str(output_path)], env=env)
         started = time.monotonic()
+        heartbeat_at = started - 15
         try:
             while process.poll() is None:
+                if worker_id and time.monotonic() - heartbeat_at >= 15:
+                    queue.heartbeat(worker_id, "running")
+                    heartbeat_at = time.monotonic()
                 state = queue.get(identifier, owner)
                 if state["status"] == "cancelled" or time.monotonic() - started > timeout:
                     process.terminate()
@@ -68,14 +78,22 @@ def main_loop():
     if main.job_queue is None:
         raise SystemExit("Enable sqlite or supabase persistence before starting the worker.")
     print("DAISY training worker ready; one fit at a time, 10 minute job limit.", flush=True)
+    worker_id = worker_identity()
+    heartbeat_at = 0
     while True:
         try:
+            if time.monotonic() - heartbeat_at >= 15:
+                main.job_queue.heartbeat(worker_id, "idle")
+                heartbeat_at = time.monotonic()
             job = main.job_queue.claim()
             if job:
-                process_job(main.job_queue, job)
+                process_job(main.job_queue, job, worker_id=worker_id)
+                main.job_queue.heartbeat(worker_id, "idle")
+                heartbeat_at = time.monotonic()
             else:
                 time.sleep(2)
         except KeyboardInterrupt:
+            main.job_queue.heartbeat(worker_id, "stopped")
             break
         except Exception:
             import logging
@@ -84,7 +102,10 @@ def main_loop():
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 4 and sys.argv[1] == "--execute":
+    if len(sys.argv) == 2 and sys.argv[1] == "--healthcheck":
+        import main
+        raise SystemExit(0 if main.job_queue and main.job_queue.worker_ready(worker_identity()) else 1)
+    elif len(sys.argv) == 4 and sys.argv[1] == "--execute":
         execute_file(sys.argv[2], sys.argv[3])
     else:
         main_loop()

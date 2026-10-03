@@ -15,8 +15,11 @@ implementation and relevant checks pass; cloud verification is recorded separate
    recovery, paginated experiment history UI, and a downloadable final diagnostics
    JSON report. Apply migration
    `202610030001_experiment_finalization.sql` before using Supabase persistence.
-4. Pending: bounded caches, endpoint/storage quotas, locked dependencies, containers,
-   capacity/failure tests, worker monitoring, and operational probes.
+4. Partially implemented: bounded DataFrame/source caches with active leases,
+   pinned runtime/test dependencies, separate API/worker/web container templates,
+   worker heartbeats and live readiness probes. Local cache recovery/capacity and
+   worker failure tests pass. Container execution, broader endpoint/storage quotas,
+   deployment load tests and operational alerting remain pending.
 5. Pending: deletion, retention, account export, usage display, and billing integration
    using Razorpay test mode (no setup charge; live transaction fees apply). Workspace
    sharing requires explicit membership checks.

@@ -75,6 +75,7 @@ from experiments import ExperimentRegistry, FinalizationConflict, public_record,
 from final_evaluation import load_owned_package, evaluate_saved_winner
 from decision_report import build_report
 from resource_access import ResourceOwners
+from resource_cache import ResourceCache, CacheCapacityError
 from persistence import build_store, PersistenceError, json_safe
 from job_queue import build_queue, QueueError
 from ai_privacy import build_budget, private_profile, restore_names, redact_text
@@ -83,6 +84,8 @@ from agent_schema import Timer, build_agent_record, new_workflow_id
 load_dotenv()
 resource_store = build_store()
 job_queue = build_queue(resource_store)
+if os.getenv("DAISY_ENV") == "production" and (not resource_store.enabled or job_queue is None):
+    raise RuntimeError("Production requires sqlite or supabase persistence and a separate training worker.")
 ai_budget = build_budget(resource_store)
 USER_AI_SETTINGS: dict[str, dict] = {}
 experiment_registry = ExperimentRegistry()
@@ -93,6 +96,11 @@ app = FastAPI(title="D.A.I.S.Y ML Backend", version="0.3.0")
 @app.exception_handler(PersistenceError)
 async def persistence_unavailable(request: Request, exc: PersistenceError):
     return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
+@app.exception_handler(CacheCapacityError)
+async def cache_full(request: Request, exc: CacheCapacityError):
+    return JSONResponse(status_code=429, content={"detail": str(exc)}, headers={"Retry-After": "5"})
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
@@ -121,7 +129,7 @@ def parse_cors_origins(raw_origins: str | None) -> list[str]:
 CORS_ORIGINS = parse_cors_origins(os.getenv("CORS_ORIGINS"))
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 request_logger = logging.getLogger("daisy.requests")
-PUBLIC_PATHS = frozenset({"/", "/docs", "/openapi.json", "/redoc", "/health/live", "/health/ready"})
+PUBLIC_PATHS = frozenset({"/", "/docs", "/openapi.json", "/redoc", "/health/live", "/health/ready", "/health/worker"})
 
 
 def normalize_request_id(candidate: str | None) -> str:
@@ -169,7 +177,8 @@ async def require_authenticated_session(request: Request, call_next):
             except HTTPException as exc:
                 response = JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
             else:
-                response = await call_next(request)
+                with DATASETS.lease():
+                    response = await call_next(request)
 
     response.headers["X-Request-ID"] = request_id
     request_logger.info(
@@ -194,8 +203,16 @@ app.add_middleware(
 
 # Datasets and their immutable owners live in this API process. Persist both
 # together before running multiple workers or restoring datasets after restart.
-DATASETS: dict[str, pd.DataFrame] = {}
-RAW_UPLOADS: dict[str, bytes] = {}
+def evict_dataset_cache(identifier):
+    DATASET_OWNERS.forget(identifier)
+    for cache in (DATASET_PARENTS, DATASET_TRANSFORMS, DATASET_DETAILS, PIPELINE_CONTEXT):
+        cache.pop(identifier, None)
+
+
+DATASETS = ResourceCache(int(os.getenv("DAISY_CACHE_MB", "512")) * 1024 * 1024, 256,
+                        size=lambda frame: frame.memory_usage(deep=True).sum(),
+                        can_evict=lambda: resource_store.enabled, on_evict=evict_dataset_cache)
+RAW_UPLOADS = ResourceCache(64 * 1024 * 1024, 256, size=len, can_evict=lambda: False)
 DATASET_OWNERS = ResourceOwners()
 
 
@@ -215,8 +232,8 @@ def require_owned_dataset(dataset_id: str, owner_id: str) -> pd.DataFrame:
         saved = resource_store.get(dataset_id, owner_id, "dataset")
         if saved:
             restored = pd.read_json(io.StringIO(saved["blob"].decode()), orient="table")
-            DATASET_OWNERS.register(dataset_id, owner_id)
             DATASETS[dataset_id] = restored
+            DATASET_OWNERS.register(dataset_id, owner_id)
             metadata = saved["metadata"]
             DATASET_TRANSFORMS[dataset_id] = metadata.get("steps", [])
             PIPELINE_CONTEXT[dataset_id] = metadata.get("context", {})
@@ -259,8 +276,8 @@ def create_derived_dataset(parent_id: str, owner_id: str, df: pd.DataFrame, step
     """Keep lineage private and give each stage execution its own identity."""
     require_owned_dataset(parent_id, owner_id)
     dataset_id = str(uuid.uuid4())
-    DATASET_OWNERS.register(dataset_id, owner_id)
     DATASETS[dataset_id] = df
+    DATASET_OWNERS.register(dataset_id, owner_id)
     DATASET_PARENTS[dataset_id] = parent_id
     DATASET_TRANSFORMS[dataset_id] = steps
     DATASET_DETAILS[dataset_id] = dict(DATASET_DETAILS.get(parent_id, {}))
@@ -508,13 +525,23 @@ def liveness_check():
 
 
 def readiness_checks() -> dict[str, bool]:
-    """Report whether the external services required by DAISY are configured."""
-    return {
+    """Configuration plus live storage/worker checks for durable deployments."""
+    checks = {
         "supabase_auth": bool(SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY),
         "groq_inference": bool(GROQ_API_KEY),
         "upload_limit": MAX_UPLOAD_BYTES > 0,
         "allowed_browser_origins": bool(CORS_ORIGINS),
     }
+    if resource_store.enabled:
+        try:
+            checks["durable_storage"] = resource_store.probe()
+        except PersistenceError:
+            checks["durable_storage"] = False
+        try:
+            checks["training_worker"] = bool(job_queue and job_queue.worker_ready())
+        except PersistenceError:
+            checks["training_worker"] = False
+    return checks
 
 
 @app.get("/health/ready")
@@ -532,6 +559,17 @@ def readiness_check():
         },
         headers=HEALTH_CACHE_HEADERS,
     )
+
+
+@app.get("/health/worker")
+def worker_health():
+    if job_queue is None:
+        return JSONResponse(content={"status": "inline_demo", "durable": False}, headers=HEALTH_CACHE_HEADERS)
+    try:
+        ready = job_queue.worker_ready()
+    except PersistenceError:
+        ready = False
+    return JSONResponse(status_code=200 if ready else 503, content={"status": "ready" if ready else "unavailable", "durable": True}, headers=HEALTH_CACHE_HEADERS)
 
 
 @app.post("/upload-dataset")
@@ -570,14 +608,18 @@ async def upload_dataset(request: Request, file: UploadFile = File(...)):
     check_training_limits(df, [])
 
     dataset_id = str(uuid.uuid4())
+    if not resource_store.enabled:
+        RAW_UPLOADS[dataset_id] = raw_bytes
+    try:
+        DATASETS[dataset_id] = df
+    except CacheCapacityError:
+        RAW_UPLOADS.pop(dataset_id, None)
+        raise
     DATASET_OWNERS.register(dataset_id, owner_id)
-    DATASETS[dataset_id] = df
     DATASET_TRANSFORMS[dataset_id] = [policy]
     DATASET_DETAILS[dataset_id] = {"filename": file.filename, "source_available": True}
     if resource_store.enabled:
         resource_store.save(f"source-{dataset_id}", owner_id, "dataset", {"source_csv": True}, raw_bytes)
-    else:
-        RAW_UPLOADS[dataset_id] = raw_bytes
     persist_dataset(dataset_id)
 
     schema_report = build_schema_report(df)
@@ -710,7 +752,7 @@ class AISettingsRequest(BaseModel):
 
 def ai_settings(owner, dataset_id=None):
     saved = resource_store.get(f"ai-{owner}", owner, "preferences")
-    account = saved["metadata"] if saved else USER_AI_SETTINGS.get(owner, {"enabled": True})
+    account = saved["metadata"] if saved else ({"enabled": True} if resource_store.enabled else USER_AI_SETTINGS.get(owner, {"enabled": True}))
     details = {}
     if dataset_id:
         root = owned_source_dataset(dataset_id, owner)
@@ -741,8 +783,10 @@ def update_ai_settings(req: AISettingsRequest, request: Request, dataset_id: str
         DATASET_DETAILS.setdefault(root, {}).update(ai_enabled=req.enabled, sensitive_columns=req.sensitive_columns)
         persist_dataset(root, update_settings=True)
     else:
-        USER_AI_SETTINGS[owner] = {"enabled": req.enabled}
-        resource_store.save(f"ai-{owner}", owner, "preferences", USER_AI_SETTINGS[owner])
+        settings = {"enabled": req.enabled}
+        resource_store.save(f"ai-{owner}", owner, "preferences", settings)
+        if not resource_store.enabled:
+            USER_AI_SETTINGS[owner] = settings
     return ai_settings(owner, dataset_id)
 
 

@@ -23,6 +23,16 @@ class SQLiteQueue:
         self.db = SQLiteStore(path)
         with self.db.connect() as db:
             db.execute("CREATE TABLE IF NOT EXISTS training_jobs (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, idempotency_key TEXT NOT NULL, signature TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued', created_at REAL NOT NULL, lease_until REAL, result TEXT, error TEXT, UNIQUE(owner_id,idempotency_key))")
+            db.execute("CREATE TABLE IF NOT EXISTS worker_heartbeats (worker_id TEXT PRIMARY KEY, seen_at REAL NOT NULL, status TEXT NOT NULL)")
+
+    def heartbeat(self, worker_id, status):
+        with self.db.connect() as db:
+            db.execute("DELETE FROM worker_heartbeats WHERE seen_at<?", (time.time() - 86400,))
+            db.execute("INSERT INTO worker_heartbeats(worker_id,seen_at,status) VALUES(?,?,?) ON CONFLICT(worker_id) DO UPDATE SET seen_at=excluded.seen_at,status=excluded.status", (worker_id, time.time(), status))
+
+    def worker_ready(self, worker_id=None):
+        with self.db.connect() as db:
+            return db.execute("SELECT 1 FROM worker_heartbeats WHERE seen_at>? AND status IN ('idle','running') AND (? IS NULL OR worker_id=?) LIMIT 1", (time.time() - 90, worker_id, worker_id)).fetchone() is not None
 
     def enqueue(self, owner, key, payload):
         with self.db.connect() as db:
@@ -77,6 +87,12 @@ class SQLiteQueue:
 class SupabaseQueue:
     def __init__(self, store):
         self.store = store
+
+    def heartbeat(self, worker_id, status):
+        self.store.request("POST", "/rest/v1/rpc/daisy_worker_heartbeat", json={"p_worker": worker_id, "p_status": status})
+
+    def worker_ready(self, worker_id=None):
+        return bool(self.store.request("POST", "/rest/v1/rpc/daisy_worker_ready", json={"p_worker": worker_id}).json())
 
     def enqueue(self, owner, key, payload):
         data = self.store.request("POST", "/rest/v1/rpc/daisy_enqueue_training", json={"requested_owner": owner, "requested_key": key, "requested_signature": signature(payload), "requested_payload": payload}).json()

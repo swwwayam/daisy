@@ -1,10 +1,2 @@
-fastapi
-uvicorn[standard]
-pandas
-python-multipart
-openai
-python-dotenv
-pydantic
-scikit-learn
-joblib
-httpx
+# Versions exercised by the regression suite.
+-r requirements.lock

@@ -28,3 +28,8 @@ class ResourceOwners:
         with self._lock:
             return self._owners.get(resource_id)
 
+    def forget(self, resource_id: str) -> None:
+        """Drop a cache entry only; durable ownership remains authoritative."""
+        with self._lock:
+            self._owners.pop(resource_id, None)
+
