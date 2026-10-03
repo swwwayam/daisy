@@ -175,7 +175,7 @@ def build_evaluation_prompt(eval_result: dict) -> str:
         k: v
         for k, v in eval_result.items()
         if k in ("model", "problem_type", "train_metrics", "test_metrics", "train_test_gap",
-                  "confusion_matrix", "residuals", "primary_metric")
+                  "confusion_matrix", "residuals", "primary_metric", "gap_definition")
     }
     return EVALUATION_PROMPT_TEMPLATE.format(eval_json=json.dumps(relevant, indent=2))
 
@@ -194,9 +194,10 @@ def parse_plan(raw_text: str) -> dict:
 
 def _fallback_verdict(eval_result: dict) -> str:
     """Deterministic fallback if Gemini's verdict needs correcting —
-    based on the actual primary test metric against fixed thresholds."""
+    using task-specific bounded scores against fixed thresholds. Error metrics
+    such as MAE have domain-specific units and cannot use these thresholds."""
     problem_type = eval_result["problem_type"]
-    pm = eval_result["primary_metric"]
+    pm = "f1_weighted" if problem_type == "classification" else "r2"
     score = eval_result["test_metrics"][pm]
     thresholds = FALLBACK_THRESHOLDS[problem_type]
     if score >= thresholds["good"]:

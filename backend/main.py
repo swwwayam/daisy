@@ -1794,7 +1794,8 @@ def run_evaluation_agent(req: EvaluationRequest, request: Request):
                 plan = restore_names(evaluation.parse_plan(result), aliases)
             else:
                 metric = eval_result["primary_metric"]
-                plan = {"verdict": evaluation._fallback_verdict(eval_result), "summary": f"Rule-based evaluation: measured final-test {metric} = {eval_result['test_metrics'][metric]}. Review diagnostics before deployment.", "observations": []}
+                verdict_metric = "f1_weighted" if eval_result["problem_type"] == "classification" else "r2"
+                plan = {"verdict": evaluation._fallback_verdict(eval_result), "summary": f"Rule-based evaluation: measured final-test {metric} = {eval_result['test_metrics'][metric]}. The generic verdict uses {verdict_metric} = {eval_result['test_metrics'][verdict_metric]}. Review domain requirements and diagnostics before deployment.", "observations": []}
         except HTTPException:
             raise
         except Exception as e:
@@ -1831,6 +1832,8 @@ def run_evaluation_agent(req: EvaluationRequest, request: Request):
             "train_metrics": eval_result["train_metrics"],
             "test_metrics": eval_result["test_metrics"],
             "train_test_gap": eval_result["train_test_gap"],
+            "primary_metric": eval_result["primary_metric"],
+            "gap_definition": eval_result.get("gap_definition"),
             "confusion_matrix": eval_result.get("confusion_matrix"),
             "residuals": eval_result.get("residuals"),
         },

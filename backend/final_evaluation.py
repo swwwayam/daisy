@@ -59,7 +59,7 @@ def evaluate_saved_winner(bundle, metadata, experiment, raw):
     train_raw, test_raw = source.loc[train_ids], source.loc[recorded_test]
     X_train, X_test = transform(bundle, train_raw), transform(bundle, test_raw)
     result = score_final_model(bundle["estimator"], metadata["model"], metadata["problem_type"], X_train, X_test,
-                               train_raw[target], test_raw[target], experiment["training_result"]["warnings"])
+                               train_raw[target], test_raw[target], experiment["training_result"]["warnings"], metadata["primary_metric"])
     result.update(experiment_id=experiment["experiment_id"], artifact_id=metadata["artifact_id"],
                   selection_metric=metadata["primary_metric"], split_strategy=metadata["split_strategy"])
     return result

@@ -42,6 +42,9 @@ def build_report(experiment, final=None):
     if final:
         card.extend([f"Finalized: {escaped(final['finalized_at'])}", metric_table(final["test_metrics"]),
                      "### Simple baseline on the same rows", metric_table(final["baseline_test_metrics"])])
+        if final.get("gap_definition"):
+            card.extend([f"Train/test gap metric: {escaped(final['primary_metric'])}",
+                         f"Gap: {final['train_test_gap']} ({escaped(final['gap_definition'])}). Positive means worse test performance on this metric."])
     else:
         card.append("Not measured. Candidate scores are validation results. Finalize the saved winner to obtain a held-out test report.")
     card.extend(["## Reproducibility", f"Data fingerprint: {result['dataset_fingerprint']}",

@@ -582,7 +582,10 @@ function ResultsPanel({ run }: { run: Run }) {
           </div>
           {e.output_summary?.baseline_test_metrics && <div className="report-block"><h5>Simple baseline on the same test rows</h5><MetricGrid metrics={e.output_summary.baseline_test_metrics} /></div>}
           {e.output_summary?.train_test_gap != null && (
-            <div className="report-line"><span className="report-k">Train / test gap</span><span className="report-v">{formatValue(e.output_summary.train_test_gap)}</span></div>
+            <>
+              <div className="report-line"><span className="report-k">Train / test gap{e.output_summary.primary_metric ? ` (${humanize(e.output_summary.primary_metric)})` : ""}</span><span className="report-v">{formatValue(e.output_summary.train_test_gap)}</span></div>
+              {e.output_summary.gap_definition && <p>{e.output_summary.gap_definition === "test_minus_train" ? "Test error minus training error." : "Training score minus test score."} Positive values mean worse test performance on this metric.</p>}
+            </>
           )}
           {e.output_summary?.confusion_matrix && <div className="report-block"><h5>Confusion matrix</h5><ConfusionMatrix data={e.output_summary.confusion_matrix as Dict} /></div>}
           {e.output_summary?.residuals && <div className="report-block"><h5>Residuals</h5><MetricGrid metrics={e.output_summary.residuals as Dict} /></div>}

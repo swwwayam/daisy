@@ -153,6 +153,8 @@ export interface TrainingResult extends AgentResult {
 
 export interface EvaluationResult extends AgentResult {
   output_summary?: {
+    primary_metric?: string;
+    gap_definition?: "test_minus_train" | "train_minus_test" | null;
     experiment_id?: string | null;
     baseline_test_metrics?: Dict | null;
     verdict?: "good" | "moderate" | "poor";

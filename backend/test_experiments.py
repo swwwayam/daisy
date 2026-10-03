@@ -116,6 +116,9 @@ def test_independent_attempts_finalize_exact_export_restart_and_auth(tmp_path, m
             assert final.status_code == 200, final.text
             measured = final.json()
             assert measured["artifact_id"] and "rmse" in measured["test_metrics"]
+            assert measured["primary_metric"] == measured["selection_metric"] == "mae"
+            assert measured["gap_definition"] == "test_minus_train"
+            assert measured["train_test_gap"] == pytest.approx(round(measured["test_metrics"]["mae"] - measured["train_metrics"]["mae"], 4))
             assert measured["baseline_test_metrics"]["mae"] > measured["test_metrics"]["mae"]
             with patch.object(main, "evaluate_saved_winner", side_effect=AssertionError("must not score twice")):
                 assert client.post(f"/experiments/{first}/finalize", headers=a).json() == measured
@@ -129,6 +132,7 @@ def test_independent_attempts_finalize_exact_export_restart_and_auth(tmp_path, m
             with zipfile.ZipFile(io.BytesIO(card.content)) as archive:
                 assert json.loads(archive.read("report.json"))["final_evaluation"] == measured
                 assert "Simple baseline" in archive.read("model_card.md").decode()
+                assert "Train/test gap metric: mae" in archive.read("model_card.md").decode()
 
 
 def test_history_is_compact_paginated_and_private(tmp_path):

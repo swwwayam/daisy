@@ -299,8 +299,12 @@ def _regression_metrics(y_true, y_pred) -> dict:
     }
 
 
-def score_final_model(winner, model_name, problem_type, X_train, X_test, y_train, y_test, warnings):
+def score_final_model(winner, model_name, problem_type, X_train, X_test, y_train, y_test, warnings, primary_metric=None):
     """Score an already fitted estimator; never refit the chosen winner."""
+    metric = primary_metric or ("f1_weighted" if problem_type == "classification" else "r2")
+    allowed = {"f1_weighted", "f1_macro", "accuracy", "balanced_accuracy"} if problem_type == "classification" else {"mae", "rmse", "r2"}
+    if metric not in allowed:
+        raise TrainingDataError("Final evaluation metric does not match the task type")
     predictions = winner.predict(X_test)
     if problem_type == "classification":
         probabilities = winner.predict_proba(X_test) if hasattr(winner, "predict_proba") else None
@@ -313,11 +317,13 @@ def score_final_model(winner, model_name, problem_type, X_train, X_test, y_train
         baseline_metrics = _regression_metrics(y_test, baseline.predict(X_test))
     train_predictions = winner.predict(X_train)
     train_metrics = _classification_metrics(y_train, train_predictions, None) if problem_type == "classification" else _regression_metrics(y_train, train_predictions)
-    metric = "f1_weighted" if problem_type == "classification" else "r2"
+    lower_is_better = metric in {"mae", "rmse"}
+    gap = test_metrics[metric] - train_metrics[metric] if lower_is_better else train_metrics[metric] - test_metrics[metric]
     report = {"model": model_name, "problem_type": problem_type, "n_train": len(X_train), "n_test": len(X_test),
               "warnings": warnings, "train_metrics": train_metrics, "test_metrics": test_metrics,
               "baseline_test_metrics": baseline_metrics, "primary_metric": metric,
-              "train_test_gap": round(train_metrics[metric] - test_metrics[metric], 4)}
+              "gap_definition": "test_minus_train" if lower_is_better else "train_minus_test",
+              "train_test_gap": round(gap, 4)}
     if problem_type == "classification":
         labels = sorted(pd.concat([y_train, y_test]).unique().tolist())
         report["confusion_matrix"] = {"labels": [str(label) for label in labels], "matrix": confusion_matrix(y_test, predictions, labels=labels).tolist()}
@@ -496,7 +502,7 @@ def train_and_evaluate(
     baseline_metrics = None
     evaluation_data = None
     if best_model and finalize_test:
-        evaluation_data = score_final_model(estimators[best_model], best_model, problem_type, X_train, X_test, y_train, y_test, warnings)
+        evaluation_data = score_final_model(estimators[best_model], best_model, problem_type, X_train, X_test, y_train, y_test, warnings, primary_metric)
         final_test_metrics = evaluation_data["test_metrics"]
         baseline_metrics = evaluation_data["baseline_test_metrics"]
 

@@ -60,3 +60,11 @@ The final report is diagnostic evidence, not a deployment certification. Current
 good/moderate/poor labels are generic heuristics; domain requirements, statistical
 uncertainty, fairness, leakage outside the recorded pipeline, and live drift still
 need review.
+
+New final reports measure the train/test gap using the frozen selection metric.
+For MAE/RMSE, the gap is test error minus training error; for scores where higher
+is better, it is training score minus test score. A positive gap always means
+worse test performance on that metric. The response and model card record both
+the metric and direction. Previously finalized reports remain immutable and
+retain their original recorded gap. Generic rule-based verdict thresholds still
+use weighted F1 or R2, rather than applying unitless thresholds to error units.
