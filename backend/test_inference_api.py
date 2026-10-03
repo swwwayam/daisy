@@ -73,3 +73,9 @@ def test_atomic_prediction_quota_survives_restart_and_is_owner_specific(tmp_path
     with pytest.raises(HTTPException):
         PredictionUsage().reserve(SQLiteStore(path), "a", 1)
     PredictionUsage().reserve(SQLiteStore(path), "b", 1)
+
+
+def test_prediction_rejects_excessive_encoded_cells_before_transform():
+    import inference
+    with pytest.raises(ValueError, match="encoding"):
+        inference.read_csv(b"x\n1\n2\n", {"preprocessing": [], "feature_columns": range(500001)})

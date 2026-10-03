@@ -32,4 +32,4 @@ class PredictionUsage:
                 if accepted:
                     self.rows.append((owner, time.time(), rows))
         if not accepted:
-            raise HTTPException(status_code=429, detail="Prediction budget reached: 100 requests / 100,000 rows per rolling day. Retry tomorrow.")
+            raise HTTPException(status_code=429, detail="Prediction/explanation budget reached: 100 requests / 100,000 scored rows per rolling day. Retry tomorrow.")

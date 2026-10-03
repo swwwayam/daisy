@@ -3,6 +3,7 @@ import { daisy, type Dict, type TrainingResult, type ExperimentRecord, type Expe
 import { parseModels, STAGES, type StageId, type StageStatus, useDaisyRun } from "./useDaisyRun";
 import { InputReviewPanel } from "./InputReviewPanel";
 import { PredictionPanel } from "./PredictionPanel";
+import { ExplanationPanel } from "./ExplanationPanel";
 import {
   ActionList,
   Empty,
@@ -550,6 +551,7 @@ function ResultsPanel({ run }: { run: Run }) {
       <ModelDownload training={t} />
       {t?.output_summary?.experiment_id && <FinalReportDownload experimentId={t.output_summary.experiment_id} modelCard />}
       {t?.output_summary?.model_artifact && <PredictionPanel key={t.output_summary.model_artifact.artifact_id} artifactId={t.output_summary.model_artifact.artifact_id} columns={t.output_summary.model_artifact.input_columns} />}
+      {t?.output_summary?.experiment_id && !!t.output_summary.feature_columns?.length && <ExplanationPanel key={t.output_summary.experiment_id} experimentId={t.output_summary.experiment_id} columns={t.output_summary.feature_columns} />}
 
       {st !== "done" && st !== "running" && (
         <ReadyState title="Finalize this winner" desc="Measure this saved model on the reserved test fold and compare it with a simple baseline. This fixes the final winner for this source dataset; further model selection needs new unseen data. Retrying this winner returns its saved scores." action="Finalize and evaluate" onRun={run.runEvaluation} />
@@ -979,6 +981,7 @@ function ExperimentHistory({ latest }: { latest?: string }) {
         </div>)}
         <ModelDownload training={record.agent_record} />
         {record.agent_record.output_summary?.model_artifact && <PredictionPanel key={record.agent_record.output_summary.model_artifact.artifact_id} artifactId={record.agent_record.output_summary.model_artifact.artifact_id} columns={record.agent_record.output_summary.model_artifact.input_columns} />}
+        {Array.isArray(record.training_result.feature_columns) && !!record.training_result.feature_columns.length && <ExplanationPanel key={record.experiment_id} experimentId={record.experiment_id} columns={record.training_result.feature_columns as string[]} />}
         <FinalReportDownload experimentId={record.experiment_id} modelCard />
         {record.final_evaluation ? <>
           <h4>Saved final test scores</h4><MetricGrid metrics={record.final_evaluation.test_metrics as Dict} />

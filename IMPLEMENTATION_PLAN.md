@@ -30,7 +30,10 @@ implementation and relevant checks pass; cloud verification is recorded separate
    candidate validation metrics, split/fold hashes, and final evaluation if measured.
 8. Partially implemented: new-CSV prediction workspace in Results and independent
    history, exact saved preprocessing, CSV download, missing/unseen-category
-   diagnostics and no persisted input rows. Model explanations remain pending.
+   diagnostics and no persisted input rows. Validation-only permutation explanations
+   now reuse the saved estimator, verify source/fold identity, bound computation,
+   share inference quotas, and offer JSON download. Local explanation tests pass;
+   a browser walkthrough and live deployment checks remain pending.
 9. Partially implemented: owner-authenticated inference by immutable artifact UUID,
    file/row/cell limits, per-process concurrency bound, and atomic rolling-day usage
    quotas. Drift monitoring and deployment capacity verification remain pending.

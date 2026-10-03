@@ -138,6 +138,7 @@ export interface ModelSelectionResult extends AgentResult {
 export interface TrainingResult extends AgentResult {
   output_summary?: {
     experiment_id?: string;
+    feature_columns?: string[];
     problem_type?: string; primary_metric?: string; best_model?: string | null;
     model_artifact?: { artifact_id: string; filename: string; model: string; input_columns: string[] } | null;
     export_error?: string | null;
@@ -181,8 +182,18 @@ export interface PredictionResult {
   diagnostics: { missing_values_before_imputation: Record<string, number>; unseen_category_counts: Record<string, number>; extra_columns_ignored: string[]; input_rows_persisted: boolean };
 }
 
+export interface ExplanationResult {
+  experiment_id: string; artifact_id: string; metric: string; baseline_metric_value: number;
+  change_label: string; rows_evaluated: number; validation_rows: number; repeats: number;
+  features: { feature: string; score_decrease: number; repeat_std: number }[];
+  scope: string; limitations: string[];
+}
+
 /* ─── Endpoints ─── */
 export const daisy = {
+  async explain(experimentId: string, features: string[]): Promise<ExplanationResult> {
+    return postJson(`/experiments/${encodeURIComponent(experimentId)}/explain`, { features });
+  },
   async predict(artifactId: string, file: File): Promise<PredictionResult> {
     const form = new FormData();
     form.append("file", file);

@@ -77,6 +77,7 @@ from experiments import ExperimentRegistry, FinalizationConflict, public_record,
 from final_evaluation import load_owned_package, load_server_package, evaluate_saved_winner
 from decision_report import build_report
 import inference
+from model_explanations import prepare_validation, explain_validation
 from prediction_usage import PredictionUsage
 from resource_access import ResourceOwners
 from resource_cache import ResourceCache, CacheCapacityError
@@ -1507,6 +1508,7 @@ def execute_model_training(req: ModelTrainingRequest, request: Request):
         actions=result["results"],
         output_summary={
             "experiment_id": experiment_id,
+            "feature_columns": result["feature_columns"],
             "problem_type": result["problem_type"],
             "primary_metric": result["primary_metric"],
             "best_model": result["best_model"],
@@ -1624,6 +1626,35 @@ def owned_experiment(identifier, owner):
     if not record:
         raise HTTPException(status_code=404, detail="Experiment not found.")
     return record
+
+
+class ExplanationRequest(BaseModel):
+    features: list[str] = Field(min_length=1, max_length=15)
+
+
+def execute_explanation(identifier, owner, features):
+    experiment = owned_experiment(identifier, owner)
+    artifact = experiment.get("model_artifact")
+    if not artifact:
+        raise HTTPException(status_code=409, detail="This experiment has no saved model to explain.")
+    if not prediction_slot.acquire(blocking=False):
+        raise HTTPException(status_code=429, detail="Prediction and explanation service is busy. Retry shortly.", headers={"Retry-After": "5"})
+    try:
+        bundle, metadata = load_owned_package(owned_artifact_path(artifact["artifact_id"], owner), experiment)
+        raw = interpreted_source(experiment["dataset_id"], owner)
+        X, y, total = prepare_validation(bundle, metadata, raw, features)
+        # Charge every scored row, including repeats, to the shared inference budget.
+        prediction_usage.reserve(resource_store, owner, len(X) * (1 + 3 * len(features)))
+        return {"experiment_id": identifier, **explain_validation(bundle, metadata, X, y, features, total)}
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=409, detail=f"Explanation failed: {exc}") from exc
+    finally:
+        prediction_slot.release()
+
+
+@app.post("/experiments/{experiment_id}/explain")
+async def explain_experiment(experiment_id: str, req: ExplanationRequest, request: Request):
+    return await run_in_threadpool(execute_explanation, experiment_id, authenticated_user_id(request), req.features)
 
 
 @app.get("/experiments")

@@ -12,10 +12,11 @@ there is no mutable latest-model alias. Only the model owner can use it. The API
 verifies the server-owned package before deserializing it and accepts CSVs only,
 never user-uploaded pickle/joblib files.
 
-Limits: 10 MiB uploaded bytes, 10,000 rows, 1,000 columns, one million cells and
+Limits: 10 MiB uploaded bytes, 10,000 rows, 1,000 columns, one million raw/encoded cells and
 64 MiB parsed data per request. One prediction operation runs at a time per API
 process; busy requests receive 429. The rolling-day account budget is 100
-requests and 100,000 rows, reserved atomically in durable deployments. Attempts
+requests and 100,000 scored rows, shared with explanations and reserved atomically
+in durable deployments. Explanation charges include every shuffle repeat. Attempts
 with valid CSVs consume a reservation even if later preprocessing fails. This
 limits repeated expensive failed requests; reservations are not refunded.
 
