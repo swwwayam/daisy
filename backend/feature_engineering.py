@@ -235,9 +235,11 @@ def _apply_encode_categorical(df, column, strategy, **_):
         # the encoded integers can actually be stored.
         encoder = LabelEncoder()
         non_null_mask = df[column].notna()
+        if not non_null_mask.any():
+            raise ValueError(f"Column '{column}' has no observed categories to label-encode")
         encoded_column = df[column].astype(object)
         encoded_column.loc[non_null_mask] = encoder.fit_transform(df.loc[non_null_mask, column].astype(str))
-        df[column] = encoded_column
+        df[column] = pd.to_numeric(encoded_column, errors="raise")
         return f"Label-encoded '{column}' ({len(encoder.classes_)} classes)"
     elif strategy == "frequency":
         freq_map = df[column].value_counts(normalize=True)

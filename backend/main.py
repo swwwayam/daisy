@@ -41,6 +41,7 @@ import logging
 import os
 import re
 import uuid
+import threading
 from time import perf_counter
 from typing import Literal
 
@@ -51,6 +52,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
 from openai import (
     APIConnectionError,
     APIStatusError,
@@ -72,8 +74,10 @@ from model_catalog import catalog, row_limit
 from input_review import InputReview, read_source
 from training_config import TrainingConfig, configured_partitions
 from experiments import ExperimentRegistry, FinalizationConflict, public_record, timestamp
-from final_evaluation import load_owned_package, evaluate_saved_winner
+from final_evaluation import load_owned_package, load_server_package, evaluate_saved_winner
 from decision_report import build_report
+import inference
+from prediction_usage import PredictionUsage
 from resource_access import ResourceOwners
 from resource_cache import ResourceCache, CacheCapacityError
 from persistence import build_store, PersistenceError, json_safe
@@ -89,6 +93,8 @@ if os.getenv("DAISY_ENV") == "production" and (not resource_store.enabled or job
 ai_budget = build_budget(resource_store)
 USER_AI_SETTINGS: dict[str, dict] = {}
 experiment_registry = ExperimentRegistry()
+prediction_usage = PredictionUsage()
+prediction_slot = threading.BoundedSemaphore(1)
 
 app = FastAPI(title="D.A.I.S.Y ML Backend", version="0.3.0")
 
@@ -1579,6 +1585,38 @@ def owned_artifact_path(artifact_id: str, owner_id: str):
 def download_trained_model(artifact_id: str, request: Request):
     path = owned_artifact_path(artifact_id, authenticated_user_id(request))
     return FileResponse(path, media_type="application/zip", filename=f"daisy-model-{artifact_id}.zip")
+
+
+def execute_prediction(artifact_id, owner, content):
+    if not prediction_slot.acquire(blocking=False):
+        raise HTTPException(status_code=429, detail="Prediction service is busy. Retry shortly.", headers={"Retry-After": "5"})
+    try:
+        path = owned_artifact_path(artifact_id, owner)
+        bundle, metadata = load_server_package(path, artifact_id)
+        frame = inference.read_csv(content, bundle)
+        prediction_usage.reserve(resource_store, owner, len(frame))
+        diagnostics = inference.diagnostics(bundle, frame)
+        values = inference.predict_csv(bundle, frame)
+        if values.memory_usage(deep=True).sum() > 32 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Prediction output exceeds the 32 MiB response budget. Supply fewer rows.")
+        return {"artifact_id": artifact_id, "model": metadata["model"], "rows": len(values),
+                "preview": json_safe(values.head(6).to_dict(orient="records")),
+                "prediction_csv": values.to_csv(index=False), "diagnostics": diagnostics}
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=400, detail=f"Prediction failed: {exc}") from exc
+    finally:
+        prediction_slot.release()
+
+
+@app.post("/models/{artifact_id}/predict")
+async def predict_with_saved_model(artifact_id: str, request: Request, file: UploadFile = File(...)):
+    owner = authenticated_user_id(request)
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Supply a CSV for prediction.")
+    content = await file.read(10 * 1024 * 1024 + 1)
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Prediction uploads are limited to 10 MiB.")
+    return await run_in_threadpool(execute_prediction, artifact_id, owner, content)
 
 
 def owned_experiment(identifier, owner):

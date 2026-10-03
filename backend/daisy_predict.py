@@ -91,7 +91,7 @@ def transform(bundle, data):
         elif kind == "strip_whitespace":
             for name in step["columns"]:
                 if name in df and pd.api.types.is_string_dtype(df[name]):
-                    df[name] = df[name].astype(str).str.strip()
+                    df[name] = df[name].map(lambda value: value.strip() if isinstance(value, str) else value)
         elif kind in {"drop_column", "drop_low_variance_column", "drop_high_correlation_column"}:
             df = df.drop(columns=[col], errors="ignore")
         elif col not in df:

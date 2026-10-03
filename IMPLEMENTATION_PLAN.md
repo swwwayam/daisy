@@ -28,8 +28,12 @@ implementation and relevant checks pass; cloud verification is recorded separate
 7. Implemented, local tests passed: downloadable final diagnostics JSON and a ZIP
    containing a deterministic Markdown model card plus full recorded pipeline JSON,
    candidate validation metrics, split/fold hashes, and final evaluation if measured.
-8. Pending: new-data prediction workspace, input diagnostics and model explanations.
-9. Pending: authenticated versioned prediction endpoints, usage limits, drift monitoring.
+8. Partially implemented: new-CSV prediction workspace in Results and independent
+   history, exact saved preprocessing, CSV download, missing/unseen-category
+   diagnostics and no persisted input rows. Model explanations remain pending.
+9. Partially implemented: owner-authenticated inference by immutable artifact UUID,
+   file/row/cell limits, per-process concurrency bound, and atomic rolling-day usage
+   quotas. Drift monitoring and deployment capacity verification remain pending.
 10. Pending: live two-account Supabase checks and deployment verification; these must
     not be represented as passed from mocked/local tests.
 

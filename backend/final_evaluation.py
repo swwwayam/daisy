@@ -11,7 +11,7 @@ from daisy_predict import transform
 from model_training import TrainingDataError, _dataset_fingerprint, _hash_index, reserved_partitions, score_final_model
 
 
-def load_owned_package(path, experiment):
+def load_server_package(path, artifact_id):
     # The API authorizes the artifact before calling this. User-uploaded pickles
     # are never accepted. Fixed members avoid filesystem extraction entirely.
     with zipfile.ZipFile(path) as archive:
@@ -22,9 +22,16 @@ def load_owned_package(path, experiment):
             if hashlib.sha256(content).hexdigest() != checksums.get(name):
                 raise TrainingDataError("Saved model package failed integrity verification")
         metadata = json.loads(metadata_bytes)
-        if metadata.get("experiment_id") != experiment["experiment_id"] or metadata["artifact_id"] != experiment["model_artifact"]["artifact_id"]:
+        if metadata["artifact_id"] != artifact_id:
             raise TrainingDataError("Saved package does not match this experiment")
         return joblib.load(io.BytesIO(payload)), metadata
+
+
+def load_owned_package(path, experiment):
+    bundle, metadata = load_server_package(path, experiment["model_artifact"]["artifact_id"])
+    if metadata.get("experiment_id") != experiment["experiment_id"]:
+        raise TrainingDataError("Saved package does not match this experiment")
+    return bundle, metadata
 
 
 def evaluate_saved_winner(bundle, metadata, experiment, raw):
