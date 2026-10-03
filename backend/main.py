@@ -1473,19 +1473,30 @@ def execute_model_training(req: ModelTrainingRequest, request: Request):
 
     result["experiment_id"] = experiment_id
     artifact = None
+    exported = None
     export_error = None
     if result["best_model"]:
         try:
-            artifact = model_export.export_model(
+            exported = model_export.export_model(
                 fitted_models[result["best_model"]], df, req.target_column,
                 fitted_preprocessing, result, req.dataset_id, workflow_id,
                 source_df=interpreted_source(req.dataset_id, owner_id),
                 owner_id=owner_id,
             )
-            resource_store.save(artifact["artifact_id"], owner_id, "artifact", artifact,
-                                model_export.artifact_path(artifact["artifact_id"]).read_bytes())
+            resource_store.save(exported["artifact_id"], owner_id, "artifact", exported,
+                                model_export.artifact_path(exported["artifact_id"]).read_bytes())
+            artifact = exported
         except Exception:
             ai_logger.exception("Could not export trained model")
+            # A local ZIP is not a durable published artifact if its storage write
+            # failed. Remove only the newly generated, owner-verified files.
+            if exported and model_export.artifact_owned_by(exported["artifact_id"], owner_id):
+                try:
+                    failed_path = model_export.artifact_path(exported["artifact_id"])
+                    failed_path.unlink(missing_ok=True)
+                    failed_path.with_suffix(".owner.json").unlink(missing_ok=True)
+                except OSError:
+                    ai_logger.exception("Could not remove unpublished model package")
             export_error = "The model trained, but its portable package could not be validated or saved. Check the backend log, then retry training."
 
     any_failed = any(r["status"] == "failed" for r in result["results"])

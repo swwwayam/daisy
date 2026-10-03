@@ -11,6 +11,11 @@ multipart `file` field. The artifact UUID identifies an immutable model version;
 there is no mutable latest-model alias. Only the model owner can use it. The API
 verifies the server-owned package before deserializing it and accepts CSVs only,
 never user-uploaded pickle/joblib files.
+Damaged, duplicate, missing, oversized, or incompatible package members fail
+clearly before scoring. Serialized member read limits do not guarantee the memory
+size of an estimator after loading; server-owned training and deployment limits
+still apply. A failed durable artifact write is reported as an export error and
+does not publish a download reference.
 
 Limits: 10 MiB uploaded bytes, 10,000 rows, 1,000 columns, one million raw/encoded cells and
 64 MiB parsed data per request. One prediction operation runs at a time per API

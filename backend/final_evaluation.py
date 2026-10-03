@@ -2,6 +2,7 @@
 import hashlib
 import io
 import json
+import pickle
 import zipfile
 
 import joblib
@@ -14,17 +15,25 @@ from model_training import TrainingDataError, _dataset_fingerprint, _hash_index,
 def load_server_package(path, artifact_id):
     # The API authorizes the artifact before calling this. User-uploaded pickles
     # are never accepted. Fixed members avoid filesystem extraction entirely.
-    with zipfile.ZipFile(path) as archive:
-        checksums = json.loads(archive.read("checksums.json"))["files"]
-        payload = archive.read("model.joblib")
-        metadata_bytes = archive.read("metadata.json")
-        for name, content in (("model.joblib", payload), ("metadata.json", metadata_bytes)):
-            if hashlib.sha256(content).hexdigest() != checksums.get(name):
-                raise TrainingDataError("Saved model package failed integrity verification")
-        metadata = json.loads(metadata_bytes)
-        if metadata["artifact_id"] != artifact_id:
-            raise TrainingDataError("Saved package does not match this experiment")
-        return joblib.load(io.BytesIO(payload)), metadata
+    try:
+        with zipfile.ZipFile(path) as archive:
+            for name, limit in (("checksums.json", 65536), ("metadata.json", 8 * 1024 * 1024), ("model.joblib", 128 * 1024 * 1024)):
+                if archive.namelist().count(name) != 1 or archive.getinfo(name).file_size > limit:
+                    raise TrainingDataError("Saved package members are missing, duplicated, or exceed the read budget")
+            checksums = json.loads(archive.read("checksums.json"))["files"]
+            payload = archive.read("model.joblib")
+            metadata_bytes = archive.read("metadata.json")
+            for name, content in (("model.joblib", payload), ("metadata.json", metadata_bytes)):
+                if hashlib.sha256(content).hexdigest() != checksums.get(name):
+                    raise TrainingDataError("Saved model package failed integrity verification")
+            metadata = json.loads(metadata_bytes)
+            if metadata["artifact_id"] != artifact_id:
+                raise TrainingDataError("Saved package does not match this experiment")
+            return joblib.load(io.BytesIO(payload)), metadata
+    except TrainingDataError:
+        raise
+    except (zipfile.BadZipFile, OSError, KeyError, ValueError, TypeError, EOFError, ImportError, AttributeError, pickle.UnpicklingError) as exc:
+        raise TrainingDataError("Saved model package is damaged or incompatible with this runtime. Restore a valid package or retrain.") from exc
 
 
 def load_owned_package(path, experiment):
