@@ -4,6 +4,7 @@ import { parseModels, STAGES, type StageId, type StageStatus, useDaisyRun } from
 import { InputReviewPanel } from "./InputReviewPanel";
 import { PredictionPanel } from "./PredictionPanel";
 import { ExplanationPanel } from "./ExplanationPanel";
+import { UsagePanel } from "./UsagePanel";
 import {
   ActionList,
   Empty,
@@ -898,6 +899,7 @@ export default function Workspace({ onExit, onSignOut }: { onExit: () => void; o
         <p role="status" aria-live="polite">{run.historyLoading ? "Loading saved runs…" : run.historyError ? `Run history: ${run.historyError}` : run.historyDurable === false ? "Runs last for this session. Saved history requires durable storage." : run.historyDurable === true && !run.savedRuns.length ? "No saved runs on this page. Upload a dataset or refresh to see your latest runs." : run.savedRuns.length ? `Showing runs ${run.historyOffset + 1}–${run.historyOffset + run.savedRuns.length}` : ""}</p>
         </div>
         <AIPrivacyControls run={run} />
+        <UsagePanel />
         <ExperimentHistory latest={run.state.training?.output_summary?.experiment_id} />
       </div>
 

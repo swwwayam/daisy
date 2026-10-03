@@ -191,8 +191,19 @@ export interface ExplanationResult {
   scope: string; limitations: string[];
 }
 
+export interface AccountUsage {
+  window_hours: number; durable: boolean; training_metered: boolean;
+  ai: { requests: number; tokens: number; next_expiry: string | null };
+  inference: { requests: number; scored_rows: number; next_expiry: string | null };
+  training: { requests: number | null; active_jobs: number | null; next_expiry: string | null };
+  limits: { ai_requests: number; ai_tokens: number; inference_requests: number; inference_scored_rows: number; training_requests: number; active_training_jobs: number };
+}
+
 /* ─── Endpoints ─── */
 export const daisy = {
+  async usage(): Promise<AccountUsage> {
+    return json(await fetch(`${BASE_URL}/account/usage`, { headers: await authHeaders() }));
+  },
   async explain(experimentId: string, features: string[]): Promise<ExplanationResult> {
     return postJson(`/experiments/${encodeURIComponent(experimentId)}/explain`, { features });
   },

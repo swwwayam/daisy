@@ -20,7 +20,10 @@ implementation and relevant checks pass; cloud verification is recorded separate
    worker heartbeats and live readiness probes. Local cache recovery/capacity and
    worker failure tests pass. Container execution, broader endpoint/storage quotas,
    deployment load tests and operational alerting remain pending.
-5. Pending: deletion, retention, account export, usage display, and billing integration
+5. Partially implemented: owner-only account usage display for rolling-day AI,
+   training, and prediction/explanation budgets. Apply
+   `202610030004_account_usage.sql` for Supabase. Deletion, retention, account export,
+   and billing integration remain pending,
    using Razorpay test mode (no setup charge; live transaction fees apply). Workspace
    sharing requires explicit membership checks.
 6. Pending: benchmark runner comparing fixed baseline, rules, and AI with measured

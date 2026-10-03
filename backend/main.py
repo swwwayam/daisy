@@ -80,6 +80,7 @@ import inference
 from input_shift import compare_inputs
 from model_explanations import prepare_validation, explain_validation
 from prediction_usage import PredictionUsage
+from account_usage import snapshot as usage_snapshot
 from resource_access import ResourceOwners
 from resource_cache import ResourceCache, CacheCapacityError
 from persistence import build_store, PersistenceError, json_safe
@@ -756,6 +757,11 @@ class ChatRequest(BaseModel):
 class AISettingsRequest(BaseModel):
     enabled: bool
     sensitive_columns: list[str] = Field(default_factory=list, max_length=1000)
+
+
+@app.get("/account/usage")
+def account_usage(request: Request):
+    return usage_snapshot(resource_store, authenticated_user_id(request), ai_budget, prediction_usage, job_queue)
 
 
 def ai_settings(owner, dataset_id=None):
