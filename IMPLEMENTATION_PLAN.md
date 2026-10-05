@@ -16,9 +16,9 @@ implementation and relevant checks pass; cloud verification is recorded separate
    JSON report. Apply migration
    `202610030001_experiment_finalization.sql` before using Supabase persistence.
 4. Partially implemented: bounded DataFrame/source caches with active leases,
-   pinned runtime/test dependencies, separate API/worker/web container templates,
+   pinned runtime/test dependencies, separate API/worker/frontend processes,
    worker heartbeats and live readiness probes. Local cache recovery/capacity and
-   worker failure tests pass. Container execution, broader endpoint/storage quotas,
+   worker failure tests pass. Process supervision, broader endpoint/storage quotas,
    deployment load tests and operational alerting remain pending.
 5. Partially implemented: owner-only account usage display for rolling-day AI,
    training, and prediction/explanation budgets. Apply
@@ -45,7 +45,7 @@ implementation and relevant checks pass; cloud verification is recorded separate
 10. Partially verified on 2026-10-03: live migrations, private CSV/JSON/ZIP storage
     round trips with temporary synthetic objects, local API/worker readiness, and
     usage RPC reachability. Live two-account authorization, authenticated end-to-end
-    training, and deployment load/container verification remain pending; these
+    training, and deployment load verification remain pending; these
     must not be represented as passed from mocked/local tests.
 
 Commits stay local unless pushing is explicitly requested. Existing features remain

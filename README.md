@@ -265,7 +265,7 @@ Create and activate a Python virtual environment:
 
 ``` powershell
 cd backend
-py -3.11 -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
@@ -305,10 +305,20 @@ The API will be available at:
 http://localhost:8000
 ```
 
+For SQLite/Supabase persistence, open a second terminal in `backend` and start
+the training worker. It processes queued training jobs and must stay running:
+
+``` powershell
+.\.venv\Scripts\python.exe worker.py
+```
+
+Demo memory mode trains inline and does not require a worker. Docker is not
+required for this version. See [operating checks](DEPLOYMENT.md) for details.
+
 For deployment probes, `GET /health/live` confirms that the API process is
-running and `GET /health/ready` reports whether Supabase authentication,
-Groq inference, and the upload limit are configured. The readiness endpoint
-returns HTTP 503 until all required settings are present.
+running. `GET /health/ready` checks required configuration, durable storage,
+and a recent worker heartbeat in SQLite/Supabase modes. It returns HTTP 503
+when a required dependency is unavailable.
 
 You can check both probes from PowerShell after starting the backend:
 
