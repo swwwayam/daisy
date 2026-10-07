@@ -865,10 +865,15 @@ function AIPrivacyControls({ run }: { run: Run }) {
 export default function Workspace({ onExit, onSignOut }: { onExit: () => void; onSignOut: () => void | Promise<void> }) {
   const run = useDaisyRun();
   const [focus, setFocus] = useState<StageId | null>(null);
+  const [selectedRun, setSelectedRun] = useState("");
   const active = actionableStage(run.state.status);
   // follow the pipeline automatically unless the user is inspecting an earlier stage
   const displayed = focus ?? active;
   const stageMeta = STAGES.find((s) => s.id === displayed)!;
+
+  useEffect(() => {
+    if (selectedRun && !run.savedRuns.some(saved => saved.id === selectedRun)) setSelectedRun("");
+  }, [run.savedRuns, selectedRun]);
 
   function goto(id: StageId) { setFocus(id); }
   // when the actionable stage advances past the user's focus, snap forward
@@ -890,11 +895,19 @@ export default function Workspace({ onExit, onSignOut }: { onExit: () => void; o
         <p>Your machine-learning workspace</p>
         <h1>{run.state.upload ? "Follow your data to discovery." : "Start with a little curiosity."}</h1>
         <div className="saved-history" aria-busy={run.historyLoading}>
-        {run.savedRuns.length > 0 && <label>Resume a saved run <select aria-label="Resume a saved run" className="pill pill-ghost" value="" disabled={run.historyLoading || Object.values(run.state.status).includes("running")} onChange={e => { if (e.target.value) void run.restore(e.target.value); }}>
+        {run.savedRuns.length > 0 && <label>Saved run <select aria-label="Choose a saved run" className="pill pill-ghost" value={selectedRun} disabled={run.historyLoading || Object.values(run.state.status).includes("running")} onChange={e => setSelectedRun(e.target.value)}>
           <option value="">Choose a run</option>
           {run.savedRuns.map(saved => <option key={saved.id} value={saved.id}>{saved.metadata.upload.filename || "Untitled dataset"} · {saved.id.slice(0, 8)} · {saved.metadata.bestModel || saved.metadata.targetColumn || "No model yet"} · {new Date(saved.updated_at).toLocaleDateString()}</option>)}
         </select></label>}
         <div className="saved-history-actions">
+          {run.savedRuns.length > 0 && <button className="pill pill-solid" disabled={!selectedRun || run.historyLoading || Object.values(run.state.status).includes("running")} onClick={() => { void run.restore(selectedRun); }}>Resume run</button>}
+          {run.savedRuns.length > 0 && <button className="pill pill-danger" disabled={!selectedRun || run.historyLoading || Object.values(run.state.status).includes("running")} onClick={() => {
+            const saved = run.savedRuns.find(item => item.id === selectedRun);
+            const label = saved?.metadata.upload.filename || selectedRun.slice(0, 8);
+            if (window.confirm(`Remove ${label} from saved run history? Datasets, experiments, and downloadable models will be kept.`)) {
+              void run.deleteSavedRun(selectedRun).then(deleted => { if (deleted) setSelectedRun(""); });
+            }
+          }}>Remove from history</button>}
           {run.historyOffset > 0 && <button className="pill pill-ghost" disabled={run.historyLoading} onClick={() => { void run.loadHistory(Math.max(0, run.historyOffset - 20)); }}>Newer runs</button>}
           {run.historyNextOffset !== null && <button className="pill pill-ghost" disabled={run.historyLoading} onClick={() => { void run.loadHistory(run.historyNextOffset as number); }}>Load older runs</button>}
           <button className="pill pill-ghost" disabled={run.historyLoading} onClick={() => { void run.loadHistory(); }}>Refresh history</button>

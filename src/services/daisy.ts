@@ -249,6 +249,12 @@ export const daisy = {
   async restoreRun(id: string): Promise<Dict> {
     return json(await fetch(`${BASE_URL}/runs/${encodeURIComponent(id)}`, { headers: await authHeaders() }));
   },
+
+  async deleteRun(id: string): Promise<{ deleted: boolean; run_id: string }> {
+    return json(await fetch(`${BASE_URL}/runs/${encodeURIComponent(id)}`, {
+      method: "DELETE", headers: await authHeaders(),
+    }));
+  },
   baseUrl: BASE_URL,
 
   async health(): Promise<{ status: string; datasets_in_memory: number }> {

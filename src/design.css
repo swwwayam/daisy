@@ -127,6 +127,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visibl
 .ws .pill { border-radius: 6px; font-weight: 500; min-height: 42px; }
 .ws .pill-solid { background: var(--cta); color: var(--surface-deep); box-shadow: none; }
 .ws .pill-ghost { background: var(--surface-raised); border-color: var(--line); }
+.ws .pill-danger { background: transparent; border-color: color-mix(in srgb, #ef645c 50%, var(--line)); color: #ff8b84; }
+.ws .pill-danger:hover:not(:disabled) { background: color-mix(in srgb, #ef645c 12%, transparent); border-color: #ef645c; }
 .ws-intro { max-width: 1180px; margin: 0 auto; padding: 44px 40px 0; }
 .ws-intro p { text-transform: uppercase; font-size: 10px; letter-spacing: .14em; color: var(--muted); margin: 0 0 12px; }
 .ws-intro h1 { font-size: clamp(30px, 4vw, 46px); font-weight: 500; line-height: 1.1; letter-spacing: -.04em; margin: 0; }
