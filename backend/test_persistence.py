@@ -44,6 +44,19 @@ def test_store_refuses_owner_takeover():
         assert store.get("id", "b", "run") is None
 
 
+def test_store_delete_is_owner_and_kind_scoped():
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteStore(Path(directory) / "state.db")
+        store.save("run-a", "owner-a", "run", {"value": 1})
+        store.save("run-b", "owner-b", "run", {"value": 2})
+        assert store.delete("run-a", "owner-b", "run") is False
+        assert store.delete("run-a", "owner-a", "dataset") is False
+        assert store.get("run-a", "owner-a", "run") is not None
+        assert store.delete("run-a", "owner-a", "run") is True
+        assert store.get("run-a", "owner-a", "run") is None
+        assert store.get("run-b", "owner-b", "run") is not None
+
+
 def test_cloud_backed_artifact_recovers_from_loss_of_local_files():
     import model_export
     with tempfile.TemporaryDirectory() as directory, patch.object(main, "resource_store", SQLiteStore(Path(directory) / "state.db")), patch.dict("os.environ", {"DAISY_MODEL_DIR": str(Path(directory) / "models")}), patch.object(main, "validate_access_token", AsyncMock(side_effect=lambda token: {"id": token})), TestClient(main.app) as client:
@@ -73,6 +86,23 @@ def test_supabase_refuses_metadata_pointing_to_another_owner():
     transport = httpx.MockTransport(lambda request: httpx.Response(200, json=[{"metadata": {}, "storage_bucket": "datasets", "storage_path": "user-b/secret"}]))
     with pytest.raises(PersistenceError):
         SupabaseStore("https://example.supabase.co", "sb_secret_test", transport).get("id", "user-a", "dataset")
+
+
+def test_supabase_delete_removes_private_object_before_metadata():
+    calls = []
+    def handle(request):
+        calls.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json=[{"id": "id", "storage_bucket": "datasets", "storage_path": "owner/id/object"}])
+        return httpx.Response(200, json={})
+    store = SupabaseStore("https://example.supabase.co", "sb_secret_test", httpx.MockTransport(handle))
+    assert store.delete("id", "owner", "dataset") is True
+    assert [(request.method, request.url.path) for request in calls] == [
+        ("GET", "/rest/v1/daisy_resources"),
+        ("DELETE", "/storage/v1/object/datasets"),
+        ("DELETE", "/rest/v1/daisy_resources"),
+    ]
+    assert calls[1].read().decode() == '{"prefixes":["owner/id/object"]}'
 
 
 @pytest.mark.parametrize("kind,metadata,expected_type,bucket", [

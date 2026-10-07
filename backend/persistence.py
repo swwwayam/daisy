@@ -75,6 +75,9 @@ class MemoryStore:
     def metadata(self, identifier, owner, kind):
         return None
 
+    def delete(self, identifier, owner, kind):
+        return False
+
     def list_runs(self, owner, limit, offset):
         return []
 
@@ -172,6 +175,15 @@ class SQLiteStore:
         with self.connect() as db:
             row = db.execute("SELECT metadata FROM resources WHERE id=? AND owner=? AND kind=?", (identifier, owner, kind)).fetchone()
         return json.loads(row["metadata"]) if row else None
+
+    def delete(self, identifier, owner, kind):
+        """Delete one resource without allowing its identifier to cross tenants."""
+        with self.connect() as db:
+            cursor = db.execute(
+                "DELETE FROM resources WHERE id=? AND owner=? AND kind=?",
+                (identifier, owner, kind),
+            )
+        return cursor.rowcount == 1
 
     def list_runs(self, owner, limit, offset):
         with self.connect() as db:
@@ -286,6 +298,26 @@ class SupabaseStore:
     def metadata(self, identifier, owner, kind):
         rows = self.request("GET", "/rest/v1/daisy_resources", params={**self.filters(identifier, owner, kind), "select": "metadata"}).json()
         return rows[0]["metadata"] if rows else None
+
+    def delete(self, identifier, owner, kind):
+        """Delete private object bytes first, then their owner-scoped metadata."""
+        filters = self.filters(identifier, owner, kind)
+        rows = self.request(
+            "GET",
+            "/rest/v1/daisy_resources",
+            params={**filters, "select": "id,storage_bucket,storage_path"},
+        ).json()
+        if not rows:
+            return False
+        row = rows[0]
+        path = row.get("storage_path")
+        bucket = row.get("storage_bucket")
+        if path:
+            if bucket not in ("datasets", "model-artifacts") or not path.startswith(quote(owner, safe="") + "/"):
+                raise PersistenceError("Invalid persisted object ownership")
+            self.request("DELETE", f"/storage/v1/object/{bucket}", json={"prefixes": [path]})
+        self.request("DELETE", "/rest/v1/daisy_resources", params=filters)
+        return True
 
     def list_runs(self, owner, limit, offset):
         # Project JSON fields in Postgres: full snapshots never cross the history boundary.
