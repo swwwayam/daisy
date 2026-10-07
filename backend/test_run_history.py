@@ -1,8 +1,10 @@
 """Compact history must paginate all owned runs without disclosing snapshots."""
+import uuid
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 
 import main
@@ -71,3 +73,28 @@ def test_summary_bounds_untrusted_fields():
     assert summary["targetColumn"] is None
     assert summary["status"] == {"dataset": "done"}
     assert run_summary({**row, "status": "not a status object"})["metadata"]["status"] == {}
+
+
+def test_delete_run_is_private_and_preserves_pipeline_resources(tmp_path):
+    store = SQLiteStore(tmp_path / "state.db")
+    run_id = str(uuid.uuid4())
+    store.save(run_id, "owner-a", "run", {"workflowId": run_id})
+    store.save("dataset-a", "owner-a", "dataset", {"steps": []}, b"private dataset")
+    def request_for(owner):
+        request = Request({"type": "http", "method": "DELETE", "path": f"/runs/{run_id}", "headers": []})
+        request.state.user = {"id": owner}
+        return request
+    with patch.object(main, "resource_store", store):
+        with pytest.raises(HTTPException) as foreign:
+            main.delete_saved_run(run_id, request_for("owner-b"))
+        assert foreign.value.status_code == 404
+        assert store.get(run_id, "owner-a", "run") is not None
+        assert main.delete_saved_run(run_id, request_for("owner-a")) == {"deleted": True, "run_id": run_id}
+        assert store.get(run_id, "owner-a", "run") is None
+        assert store.get("dataset-a", "owner-a", "dataset")["blob"] == b"private dataset"
+        with pytest.raises(HTTPException) as missing:
+            main.delete_saved_run(run_id, request_for("owner-a"))
+        assert missing.value.status_code == 404
+        with pytest.raises(HTTPException) as invalid:
+            main.delete_saved_run("not-a-uuid", request_for("owner-a"))
+        assert invalid.value.status_code == 400

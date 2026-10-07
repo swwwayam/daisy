@@ -205,7 +205,7 @@ async def require_authenticated_session(request: Request, call_next):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
-    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID", "Idempotency-Key"],
     expose_headers=["X-Request-ID"],
 )
@@ -869,6 +869,20 @@ def get_saved_run(run_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Run not found.")
     validate_run_references(run_id, saved["metadata"], owner, restoring=True)
     return saved["metadata"]
+
+
+@app.delete("/runs/{run_id}")
+def delete_saved_run(run_id: str, request: Request):
+    """Remove one dashboard snapshot without deleting its datasets or models."""
+    try:
+        uuid.UUID(run_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid run ID")
+    owner = authenticated_user_id(request)
+    if not resource_store.delete(run_id, owner, "run"):
+        # Missing and foreign runs deliberately have the same response.
+        raise HTTPException(status_code=404, detail="Run not found.")
+    return {"deleted": True, "run_id": run_id}
 
 
 @app.post("/chat")
