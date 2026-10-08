@@ -55,3 +55,18 @@ def test_cloud_usage_calls_owner_aggregate_rpc_only():
         return httpx.Response(200, json={"ai": {"requests": 0}, "inference": {"requests": 0}, "training": {"requests": 0}})
     store = SupabaseStore("https://test.supabase.co", "sb_secret_test", httpx.MockTransport(handler))
     assert snapshot(store, "a", None, None, object())["durable"]
+
+
+def test_account_export_is_owner_scoped_metadata_with_clear_exclusions(tmp_path):
+    store = SQLiteStore(tmp_path / "state.db")
+    store.save("run-a", "a", "run", {"chat": [{"text": "my private note"}]})
+    store.save("dataset-a", "a", "dataset", {"filename": "mine.csv"}, b"private csv bytes")
+    store.save("run-b", "b", "run", {"chat": [{"text": "another user's note"}]})
+    with patch.object(main, "resource_store", store):
+        export = main.account_export_document("a")
+    assert export["format_version"] == 1 and export["scope"] == "account_metadata"
+    assert export["resource_counts"] == {"dataset": 1, "run": 1}
+    assert {row["id"] for row in export["resources"]} == {"run-a", "dataset-a"}
+    assert "another user's note" not in str(export)
+    assert "private csv bytes" not in str(export)
+    assert any("CSV" in item for item in export["excluded"])

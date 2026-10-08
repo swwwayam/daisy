@@ -764,6 +764,37 @@ def account_usage(request: Request):
     return usage_snapshot(resource_store, authenticated_user_id(request), ai_budget, prediction_usage, job_queue)
 
 
+def account_export_document(owner: str) -> dict:
+    resources = resource_store.export_metadata(owner)
+    counts: dict[str, int] = {}
+    for resource in resources:
+        kind = resource["kind"]
+        counts[kind] = counts.get(kind, 0) + 1
+    return {
+        "format_version": 1,
+        "exported_at": timestamp(),
+        "scope": "account_metadata",
+        "resource_counts": counts,
+        "resources": resources,
+        "excluded": [
+            "source CSV bytes (use the dataset download)",
+            "model ZIP bytes (use the model download)",
+            "authentication credentials and provider tokens",
+        ],
+    }
+
+
+@app.get("/account/export")
+def export_account_metadata(request: Request):
+    owner = authenticated_user_id(request)
+    payload = json.dumps(account_export_document(owner), indent=2, allow_nan=False).encode()
+    return StreamingResponse(
+        io.BytesIO(payload),
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="daisy-account-export.json"', "Cache-Control": "no-store"},
+    )
+
+
 def ai_settings(owner, dataset_id=None):
     saved = resource_store.get(f"ai-{owner}", owner, "preferences")
     account = saved["metadata"] if saved else ({"enabled": True} if resource_store.enabled else USER_AI_SETTINGS.get(owner, {"enabled": True}))
