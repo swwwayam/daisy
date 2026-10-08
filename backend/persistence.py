@@ -78,6 +78,9 @@ class MemoryStore:
     def delete(self, identifier, owner, kind):
         return False
 
+    def export_metadata(self, owner):
+        return []
+
     def list_runs(self, owner, limit, offset):
         return []
 
@@ -184,6 +187,16 @@ class SQLiteStore:
                 (identifier, owner, kind),
             )
         return cursor.rowcount == 1
+
+    def export_metadata(self, owner):
+        """Return every owner-visible record without loading stored binary objects."""
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT id,kind,metadata,updated_at FROM resources WHERE owner=? ORDER BY updated_at,id",
+                (owner,),
+            ).fetchall()
+        return [{"id": row["id"], "kind": row["kind"], "metadata": json.loads(row["metadata"]),
+                 "updated_at": row["updated_at"]} for row in rows]
 
     def list_runs(self, owner, limit, offset):
         with self.connect() as db:
@@ -318,6 +331,19 @@ class SupabaseStore:
             self.request("DELETE", f"/storage/v1/object/{bucket}", json={"prefixes": [path]})
         self.request("DELETE", "/rest/v1/daisy_resources", params=filters)
         return True
+
+    def export_metadata(self, owner):
+        """Page through metadata only; private Storage objects remain separate downloads."""
+        records, offset, page_size = [], 0, 500
+        while True:
+            page = self.request("GET", "/rest/v1/daisy_resources", params={
+                "owner_id": f"eq.{owner}", "select": "id,kind,metadata,updated_at",
+                "order": "updated_at.asc,id.asc", "limit": str(page_size), "offset": str(offset),
+            }).json()
+            records.extend(page)
+            if len(page) < page_size:
+                return records
+            offset += page_size
 
     def list_runs(self, owner, limit, offset):
         # Project JSON fields in Postgres: full snapshots never cross the history boundary.

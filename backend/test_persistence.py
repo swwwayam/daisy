@@ -57,6 +57,17 @@ def test_store_delete_is_owner_and_kind_scoped():
         assert store.get("run-b", "owner-b", "run") is not None
 
 
+def test_metadata_export_is_complete_private_and_excludes_blobs(tmp_path):
+    store = SQLiteStore(tmp_path / "state.db")
+    store.save("dataset", "owner-a", "dataset", {"filename": "private.csv"}, b"raw private bytes")
+    store.save("run", "owner-a", "run", {"workflowId": "run"})
+    store.save("foreign", "owner-b", "run", {"secret": True})
+    exported = store.export_metadata("owner-a")
+    assert [row["id"] for row in exported] == ["dataset", "run"]
+    assert all("blob" not in row and "storage_path" not in row for row in exported)
+    assert store.export_metadata("missing-owner") == []
+
+
 def test_cloud_backed_artifact_recovers_from_loss_of_local_files():
     import model_export
     with tempfile.TemporaryDirectory() as directory, patch.object(main, "resource_store", SQLiteStore(Path(directory) / "state.db")), patch.dict("os.environ", {"DAISY_MODEL_DIR": str(Path(directory) / "models")}), patch.object(main, "validate_access_token", AsyncMock(side_effect=lambda token: {"id": token})), TestClient(main.app) as client:
@@ -103,6 +114,20 @@ def test_supabase_delete_removes_private_object_before_metadata():
         ("DELETE", "/rest/v1/daisy_resources"),
     ]
     assert calls[1].read().decode() == '{"prefixes":["owner/id/object"]}'
+
+
+def test_supabase_metadata_export_pages_with_owner_filter():
+    calls = []
+    def handle(request):
+        calls.append(request)
+        offset = int(request.url.params["offset"])
+        count = 500 if offset == 0 else 1
+        return httpx.Response(200, json=[{"id": f"item-{offset + i}", "kind": "run", "metadata": {}, "updated_at": "now"} for i in range(count)])
+    store = SupabaseStore("https://example.supabase.co", "sb_secret_test", httpx.MockTransport(handle))
+    assert len(store.export_metadata("owner")) == 501
+    assert [request.url.params["offset"] for request in calls] == ["0", "500"]
+    assert all(request.url.params["owner_id"] == "eq.owner" for request in calls)
+    assert all("storage" not in request.url.params["select"] for request in calls)
 
 
 @pytest.mark.parametrize("kind,metadata,expected_type,bucket", [
