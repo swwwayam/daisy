@@ -878,6 +878,13 @@ def list_saved_runs(request: Request, limit: int = Query(20, ge=1, le=50), offse
             "next_offset": offset + limit if len(rows) > limit else None}
 
 
+@app.delete("/runs")
+def clear_saved_runs(request: Request):
+    """Clear dashboard history while preserving datasets, experiments, and models."""
+    owner = authenticated_user_id(request)
+    return {"deleted": resource_store.delete_runs(owner)}
+
+
 @app.put("/runs/{run_id}")
 def save_run_snapshot(run_id: str, req: RunSnapshotRequest, request: Request):
     owner = authenticated_user_id(request)

@@ -98,3 +98,18 @@ def test_delete_run_is_private_and_preserves_pipeline_resources(tmp_path):
         with pytest.raises(HTTPException) as invalid:
             main.delete_saved_run("not-a-uuid", request_for("owner-a"))
         assert invalid.value.status_code == 400
+
+
+def test_clear_run_history_preserves_other_resources_and_owners(tmp_path):
+    store = SQLiteStore(tmp_path / "state.db")
+    store.save("run-a-1", "owner-a", "run", {})
+    store.save("run-a-2", "owner-a", "run", {})
+    store.save("dataset-a", "owner-a", "dataset", {}, b"dataset")
+    store.save("run-b", "owner-b", "run", {})
+    request = Request({"type": "http", "method": "DELETE", "path": "/runs", "headers": []})
+    request.state.user = {"id": "owner-a"}
+    with patch.object(main, "resource_store", store):
+        assert main.clear_saved_runs(request) == {"deleted": 2}
+    assert store.list_runs("owner-a", 20, 0) == []
+    assert store.get("dataset-a", "owner-a", "dataset")["blob"] == b"dataset"
+    assert store.get("run-b", "owner-b", "run") is not None
