@@ -68,6 +68,19 @@ def test_metadata_export_is_complete_private_and_excludes_blobs(tmp_path):
     assert store.export_metadata("missing-owner") == []
 
 
+def test_delete_runs_clears_only_owner_history(tmp_path):
+    store = SQLiteStore(tmp_path / "state.db")
+    store.save("run-a-1", "owner-a", "run", {})
+    store.save("run-a-2", "owner-a", "run", {})
+    store.save("dataset-a", "owner-a", "dataset", {}, b"private")
+    store.save("run-b", "owner-b", "run", {})
+    assert store.delete_runs("owner-a") == 2
+    assert store.list_runs("owner-a", 20, 0) == []
+    assert store.get("dataset-a", "owner-a", "dataset")["blob"] == b"private"
+    assert store.get("run-b", "owner-b", "run") is not None
+    assert store.delete_runs("owner-a") == 0
+
+
 def test_cloud_backed_artifact_recovers_from_loss_of_local_files():
     import model_export
     with tempfile.TemporaryDirectory() as directory, patch.object(main, "resource_store", SQLiteStore(Path(directory) / "state.db")), patch.dict("os.environ", {"DAISY_MODEL_DIR": str(Path(directory) / "models")}), patch.object(main, "validate_access_token", AsyncMock(side_effect=lambda token: {"id": token})), TestClient(main.app) as client:
@@ -128,6 +141,24 @@ def test_supabase_metadata_export_pages_with_owner_filter():
     assert [request.url.params["offset"] for request in calls] == ["0", "500"]
     assert all(request.url.params["owner_id"] == "eq.owner" for request in calls)
     assert all("storage" not in request.url.params["select"] for request in calls)
+
+
+def test_supabase_delete_runs_enumerates_owner_history_only():
+    calls = []
+    def handle(request):
+        calls.append(request)
+        if request.method == "GET" and request.url.params.get("select") == "id":
+            return httpx.Response(200, json=[{"id": "run-1"}, {"id": "run-2"}])
+        if request.method == "GET":
+            return httpx.Response(200, json=[{"id": request.url.params["id"][3:], "storage_bucket": None, "storage_path": None}])
+        return httpx.Response(200, json={})
+    store = SupabaseStore("https://example.supabase.co", "sb_secret_test", httpx.MockTransport(handle))
+    assert store.delete_runs("owner") == 2
+    listing = calls[0]
+    assert listing.url.params["owner_id"] == "eq.owner" and listing.url.params["kind"] == "eq.run"
+    deletes = [call for call in calls if call.method == "DELETE"]
+    assert len(deletes) == 2
+    assert all(call.url.params["owner_id"] == "eq.owner" and call.url.params["kind"] == "eq.run" for call in deletes)
 
 
 @pytest.mark.parametrize("kind,metadata,expected_type,bucket", [

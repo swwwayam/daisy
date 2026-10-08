@@ -81,6 +81,9 @@ class MemoryStore:
     def export_metadata(self, owner):
         return []
 
+    def delete_runs(self, owner):
+        return 0
+
     def list_runs(self, owner, limit, offset):
         return []
 
@@ -197,6 +200,12 @@ class SQLiteStore:
             ).fetchall()
         return [{"id": row["id"], "kind": row["kind"], "metadata": json.loads(row["metadata"]),
                  "updated_at": row["updated_at"]} for row in rows]
+
+    def delete_runs(self, owner):
+        """Remove only saved dashboard snapshots for one owner."""
+        with self.connect() as db:
+            cursor = db.execute("DELETE FROM resources WHERE owner=? AND kind='run'", (owner,))
+        return cursor.rowcount
 
     def list_runs(self, owner, limit, offset):
         with self.connect() as db:
@@ -344,6 +353,16 @@ class SupabaseStore:
             if len(page) < page_size:
                 return records
             offset += page_size
+
+    def delete_runs(self, owner):
+        """Delete the owner's currently listed run IDs without touching later resources."""
+        rows = self.request("GET", "/rest/v1/daisy_resources", params={
+            "owner_id": f"eq.{owner}", "kind": "eq.run", "select": "id", "order": "id.asc",
+        }).json()
+        deleted = 0
+        for row in rows:
+            deleted += int(self.delete(row["id"], owner, "run"))
+        return deleted
 
     def list_runs(self, owner, limit, offset):
         # Project JSON fields in Postgres: full snapshots never cross the history boundary.
