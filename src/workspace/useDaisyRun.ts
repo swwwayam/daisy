@@ -221,6 +221,26 @@ export function useDaisyRun() {
     }
   }, [loadHistory, savedRuns.length]);
 
+  const clearSavedRuns = useCallback(async () => {
+    setHistoryLoading(true);
+    setHistoryError("");
+    try {
+      const result = await daisy.clearRuns();
+      ++historyRequest.current;
+      historyBusy.current = false;
+      historyOffsetRef.current = 0;
+      setSavedRuns([]);
+      setHistoryOffset(0);
+      setHistoryNextOffset(null);
+      setHistoryLoading(false);
+      return result.deleted;
+    } catch (e) {
+      setHistoryError(errMsg(e));
+      setHistoryLoading(false);
+      return null;
+    }
+  }, []);
+
   const patch = useCallback((p: Partial<RunState>) => setS((prev) => ({ ...prev, ...p })), []);
   const setStatus = useCallback(
     (id: StageId, st: StageStatus) => setS((prev) => ({ ...prev, status: { ...prev.status, [id]: st } })),
@@ -465,5 +485,5 @@ export function useDaisyRun() {
 
   const reset = useCallback(() => setS(initialState), []);
 
-  return { state: s, savedRuns, historyError, historyLoading, historyDurable, historyOffset, historyNextOffset, loadHistory, restore, deleteSavedRun, acceptedModels, upload, reviewInput, runCleaning, runEda, runFeature, selectTarget, runSelection, runTraining, runEvaluation, sendChat, download, reset, setStatus };
+  return { state: s, savedRuns, historyError, historyLoading, historyDurable, historyOffset, historyNextOffset, loadHistory, restore, deleteSavedRun, clearSavedRuns, acceptedModels, upload, reviewInput, runCleaning, runEda, runFeature, selectTarget, runSelection, runTraining, runEvaluation, sendChat, download, reset, setStatus };
 }

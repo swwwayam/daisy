@@ -21,7 +21,8 @@ implementation and relevant checks pass; cloud verification is recorded separate
    worker failure tests pass. Process supervision, broader endpoint/storage quotas,
    deployment load tests and operational alerting remain pending.
 5. Partially implemented: owner-only account usage display for rolling-day AI,
-   training, and prediction/explanation budgets, saved-run deletion, and a private
+   training, and prediction/explanation budgets, individual and bulk saved-run
+   history deletion, and a private
    downloadable metadata export with explicit binary-data exclusions. Apply
    `202610030004_account_usage.sql` for Supabase. Full dataset/model deletion,
    automated retention, and billing integration remain pending,

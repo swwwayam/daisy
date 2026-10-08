@@ -908,6 +908,13 @@ export default function Workspace({ onExit, onSignOut }: { onExit: () => void; o
               void run.deleteSavedRun(selectedRun).then(deleted => { if (deleted) setSelectedRun(""); });
             }
           }}>Remove from history</button>}
+          {run.savedRuns.length > 0 && <button className="pill pill-danger" disabled={run.historyLoading || Object.values(run.state.status).includes("running")} onClick={() => {
+            if (window.confirm("Clear all saved run history? Your datasets, experiments, downloadable models, and current workspace will be kept.")) {
+              void run.clearSavedRuns().then(deleted => {
+                if (deleted !== null) setSelectedRun("");
+              });
+            }
+          }}>Clear all history</button>}
           {run.historyOffset > 0 && <button className="pill pill-ghost" disabled={run.historyLoading} onClick={() => { void run.loadHistory(Math.max(0, run.historyOffset - 20)); }}>Newer runs</button>}
           {run.historyNextOffset !== null && <button className="pill pill-ghost" disabled={run.historyLoading} onClick={() => { void run.loadHistory(run.historyNextOffset as number); }}>Load older runs</button>}
           <button className="pill pill-ghost" disabled={run.historyLoading} onClick={() => { void run.loadHistory(); }}>Refresh history</button>

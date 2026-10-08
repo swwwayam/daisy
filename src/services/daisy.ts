@@ -260,6 +260,12 @@ export const daisy = {
       method: "DELETE", headers: await authHeaders(),
     }));
   },
+
+  async clearRuns(): Promise<{ deleted: number }> {
+    return json(await fetch(`${BASE_URL}/runs`, {
+      method: "DELETE", headers: await authHeaders(),
+    }));
+  },
   baseUrl: BASE_URL,
 
   async health(): Promise<{ status: string; datasets_in_memory: number }> {
