@@ -206,6 +206,11 @@ export const daisy = {
   async usage(): Promise<AccountUsage> {
     return json(await fetch(`${BASE_URL}/account/usage`, { headers: await authHeaders() }));
   },
+  async downloadAccountExport(): Promise<Blob> {
+    const response = await fetch(`${BASE_URL}/account/export`, { headers: await authHeaders() });
+    if (!response.ok) throw new DaisyApiError(await readError(response), response.status);
+    return response.blob();
+  },
   async explain(experimentId: string, features: string[]): Promise<ExplanationResult> {
     return postJson(`/experiments/${encodeURIComponent(experimentId)}/explain`, { features });
   },
