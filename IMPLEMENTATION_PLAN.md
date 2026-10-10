@@ -24,8 +24,10 @@ implementation and relevant checks pass; cloud verification is recorded separate
    training, and prediction/explanation budgets, individual and bulk saved-run
    history deletion, and a private
    downloadable metadata export with explicit binary-data exclusions. Apply
+   Configurable owner-scoped saved-run retention is available through
+   `DAISY_RUN_RETENTION_DAYS` and remains disabled by default. Apply
    `202610030004_account_usage.sql` for Supabase. Full dataset/model deletion,
-   automated retention, and billing integration remain pending,
+   binary retention automation, and billing integration remain pending,
    using Razorpay test mode (no setup charge; live transaction fees apply). Workspace
    sharing requires explicit membership checks.
 6. Pending: benchmark runner comparing fixed baseline, rules, and AI with measured

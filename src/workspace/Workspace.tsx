@@ -920,6 +920,7 @@ export default function Workspace({ onExit, onSignOut }: { onExit: () => void; o
           <button className="pill pill-ghost" disabled={run.historyLoading} onClick={() => { void run.loadHistory(); }}>Refresh history</button>
         </div>
         <p role="status" aria-live="polite">{run.historyLoading ? "Loading saved runs…" : run.historyError ? `Run history: ${run.historyError}` : run.historyDurable === false ? "Runs last for this session. Saved history requires durable storage." : run.historyDurable === true && !run.savedRuns.length ? "No saved runs on this page. Upload a dataset or refresh to see your latest runs." : run.savedRuns.length ? `Showing runs ${run.historyOffset + 1}–${run.historyOffset + run.savedRuns.length}` : ""}</p>
+        {run.historyRetentionDays > 0 && <p>Saved run snapshots expire after {run.historyRetentionDays} days.{run.historyPruned > 0 ? ` Removed ${run.historyPruned} expired ${run.historyPruned === 1 ? "run" : "runs"}.` : ""}</p>}
         </div>
         <AIPrivacyControls run={run} />
         <UsagePanel />
