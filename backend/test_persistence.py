@@ -81,6 +81,23 @@ def test_delete_runs_clears_only_owner_history(tmp_path):
     assert store.delete_runs("owner-a") == 0
 
 
+def test_prune_runs_respects_cutoff_owner_and_resource_kind(tmp_path):
+    store = SQLiteStore(tmp_path / "state.db")
+    for identifier, owner, kind in [
+        ("old-run", "owner-a", "run"), ("new-run", "owner-a", "run"),
+        ("old-dataset", "owner-a", "dataset"), ("foreign-run", "owner-b", "run"),
+    ]:
+        store.save(identifier, owner, kind, {})
+    with store.connect() as db:
+        db.execute("UPDATE resources SET updated_at='2026-01-01 00:00:00' WHERE id IN ('old-run','old-dataset','foreign-run')")
+        db.execute("UPDATE resources SET updated_at='2026-10-10 00:00:00' WHERE id='new-run'")
+    assert store.prune_runs("owner-a", "2026-09-01T00:00:00+00:00") == 1
+    assert store.get("old-run", "owner-a", "run") is None
+    assert store.get("new-run", "owner-a", "run") is not None
+    assert store.get("old-dataset", "owner-a", "dataset") is not None
+    assert store.get("foreign-run", "owner-b", "run") is not None
+
+
 def test_cloud_backed_artifact_recovers_from_loss_of_local_files():
     import model_export
     with tempfile.TemporaryDirectory() as directory, patch.object(main, "resource_store", SQLiteStore(Path(directory) / "state.db")), patch.dict("os.environ", {"DAISY_MODEL_DIR": str(Path(directory) / "models")}), patch.object(main, "validate_access_token", AsyncMock(side_effect=lambda token: {"id": token})), TestClient(main.app) as client:
@@ -159,6 +176,24 @@ def test_supabase_delete_runs_enumerates_owner_history_only():
     deletes = [call for call in calls if call.method == "DELETE"]
     assert len(deletes) == 2
     assert all(call.url.params["owner_id"] == "eq.owner" and call.url.params["kind"] == "eq.run" for call in deletes)
+
+
+def test_supabase_prune_runs_filters_cutoff_before_deleting():
+    calls = []
+    def handle(request):
+        calls.append(request)
+        if request.method == "GET" and request.url.params.get("updated_at"):
+            return httpx.Response(200, json=[{"id": "expired-run"}])
+        if request.method == "GET":
+            return httpx.Response(200, json=[{"id": "expired-run", "storage_bucket": None, "storage_path": None}])
+        return httpx.Response(200, json={})
+    store = SupabaseStore("https://example.supabase.co", "sb_secret_test", httpx.MockTransport(handle))
+    cutoff = "2026-09-10T12:00:00+00:00"
+    assert store.prune_runs("owner", cutoff) == 1
+    listing = calls[0]
+    assert listing.url.params["owner_id"] == "eq.owner"
+    assert listing.url.params["kind"] == "eq.run"
+    assert listing.url.params["updated_at"] == f"lt.{cutoff}"
 
 
 @pytest.mark.parametrize("kind,metadata,expected_type,bucket", [

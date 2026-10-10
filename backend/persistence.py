@@ -84,6 +84,9 @@ class MemoryStore:
     def delete_runs(self, owner):
         return 0
 
+    def prune_runs(self, owner, before):
+        return 0
+
     def list_runs(self, owner, limit, offset):
         return []
 
@@ -205,6 +208,15 @@ class SQLiteStore:
         """Remove only saved dashboard snapshots for one owner."""
         with self.connect() as db:
             cursor = db.execute("DELETE FROM resources WHERE owner=? AND kind='run'", (owner,))
+        return cursor.rowcount
+
+    def prune_runs(self, owner, before):
+        """Remove only snapshots strictly older than an ISO-8601 cutoff."""
+        with self.connect() as db:
+            cursor = db.execute(
+                "DELETE FROM resources WHERE owner=? AND kind='run' AND datetime(updated_at) < datetime(?)",
+                (owner, before),
+            )
         return cursor.rowcount
 
     def list_runs(self, owner, limit, offset):
@@ -363,6 +375,20 @@ class SupabaseStore:
         for row in rows:
             deleted += int(self.delete(row["id"], owner, "run"))
         return deleted
+
+    def prune_runs(self, owner, before):
+        """Enumerate the cutoff set first so concurrent new snapshots are never removed."""
+        identifiers, offset, page_size = [], 0, 500
+        while True:
+            page = self.request("GET", "/rest/v1/daisy_resources", params={
+                "owner_id": f"eq.{owner}", "kind": "eq.run", "updated_at": f"lt.{before}",
+                "select": "id", "order": "id.asc", "limit": str(page_size), "offset": str(offset),
+            }).json()
+            identifiers.extend(row["id"] for row in page)
+            if len(page) < page_size:
+                break
+            offset += page_size
+        return sum(int(self.delete(identifier, owner, "run")) for identifier in identifiers)
 
     def list_runs(self, owner, limit, offset):
         # Project JSON fields in Postgres: full snapshots never cross the history boundary.
