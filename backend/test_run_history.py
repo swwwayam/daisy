@@ -47,6 +47,22 @@ def test_history_rejects_unbounded_queries(query):
         assert client.get(f"/runs?{query}", headers={"Authorization": "Bearer a"}).status_code == 422
 
 
+def test_history_prunes_expired_runs_before_listing(tmp_path):
+    store = SQLiteStore(tmp_path / "state.db")
+    store.save("expired", "owner", "run", {})
+    store.save("future", "owner", "run", {})
+    with store.connect() as db:
+        db.execute("UPDATE resources SET updated_at='2020-01-01 00:00:00' WHERE id='expired'")
+        db.execute("UPDATE resources SET updated_at='2099-01-01 00:00:00' WHERE id='future'")
+    request = Request({"type": "http", "method": "GET", "path": "/runs", "headers": []})
+    request.state.user = {"id": "owner"}
+    with patch.object(main, "resource_store", store), patch.object(main, "RUN_RETENTION_DAYS", 30):
+        result = main.list_saved_runs(request, limit=20, offset=0)
+    assert result["retention_days"] == 30 and result["pruned"] == 1
+    assert [run["id"] for run in result["runs"]] == ["future"]
+    assert store.get("expired", "owner", "run") is None
+
+
 def test_cloud_history_projects_fields_and_paginates_before_transmission():
     calls = []
     def handle(request):

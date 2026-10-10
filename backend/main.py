@@ -87,8 +87,10 @@ from persistence import build_store, PersistenceError, json_safe
 from job_queue import build_queue, QueueError
 from ai_privacy import build_budget, private_profile, restore_names, redact_text
 from agent_schema import Timer, build_agent_record, new_workflow_id
+from retention import parse_retention_days, retention_cutoff
 
 load_dotenv()
+RUN_RETENTION_DAYS = parse_retention_days(os.getenv("DAISY_RUN_RETENTION_DAYS"))
 resource_store = build_store()
 job_queue = build_queue(resource_store)
 if os.getenv("DAISY_ENV") == "production" and (not resource_store.enabled or job_queue is None):
@@ -873,9 +875,13 @@ def validate_run_references(run_id, state, owner, *, restoring=False):
 
 @app.get("/runs")
 def list_saved_runs(request: Request, limit: int = Query(20, ge=1, le=50), offset: int = Query(0, ge=0, le=100000)):
-    rows = resource_store.list_runs(authenticated_user_id(request), limit + 1, offset)
+    owner = authenticated_user_id(request)
+    cutoff = retention_cutoff(RUN_RETENTION_DAYS)
+    pruned = resource_store.prune_runs(owner, cutoff) if cutoff else 0
+    rows = resource_store.list_runs(owner, limit + 1, offset)
     return {"runs": rows[:limit], "durable": resource_store.enabled,
-            "next_offset": offset + limit if len(rows) > limit else None}
+            "next_offset": offset + limit if len(rows) > limit else None,
+            "retention_days": RUN_RETENTION_DAYS, "pruned": pruned}
 
 
 @app.delete("/runs")
