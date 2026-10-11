@@ -1749,12 +1749,14 @@ async def explain_experiment(experiment_id: str, req: ExplanationRequest, reques
 
 @app.get("/experiments")
 def list_experiments(request: Request, limit: int = Query(20, ge=1, le=50), offset: int = Query(0, ge=0, le=100000)):
-    rows = experiment_registry.list(resource_store, authenticated_user_id(request), limit + 1, offset)
+    owner = authenticated_user_id(request)
+    rows = experiment_registry.list(resource_store, owner, limit + 1, offset)
     return {"experiments": [{"experiment_id": row["id"], "created_at": row["metadata"]["created_at"],
                               "dataset_id": row["metadata"]["dataset_id"], "target_column": row["metadata"]["target_column"],
                               "best_model": row["metadata"]["training_result"]["best_model"],
                               "primary_metric": row["metadata"]["training_result"]["primary_metric"]} for row in rows[:limit]],
-            "next_offset": offset + limit if len(rows) > limit else None, "durable": resource_store.enabled}
+            "next_offset": offset + limit if len(rows) > limit else None, "durable": resource_store.enabled,
+            "total": experiment_registry.count(resource_store, owner)}
 
 
 @app.get("/experiments/{experiment_id}")

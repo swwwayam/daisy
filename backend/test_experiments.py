@@ -148,4 +148,6 @@ def test_history_is_compact_paginated_and_private(tmp_path):
     assert not {row["id"] for row in first} & {row["id"] for row in second}
     assert "evaluation_state" not in json.dumps(first)
     assert len(json.dumps(first)) < 7000
+    assert registry.count(store, "a") == 23
+    assert registry.count(store, "b") == 0
     assert registry.list(store, "b", 20, 0) == []

@@ -45,6 +45,12 @@ class ExperimentRegistry:
             return [{"id": key, "metadata": value, "updated_at": value["created_at"]}
                     for key, (creator, value) in reversed(list(self.records.items())) if creator == owner][offset:offset + limit]
 
+    def count(self, store, owner):
+        if store.enabled:
+            return store.count(owner, "experiment")
+        with self.lock:
+            return sum(1 for creator, _ in self.records.values() if creator == owner)
+
     def finalization(self, store, source, owner):
         if store.enabled:
             return store.finalization(source, owner)
