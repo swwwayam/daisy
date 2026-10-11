@@ -68,6 +68,17 @@ def test_metadata_export_is_complete_private_and_excludes_blobs(tmp_path):
     assert store.export_metadata("missing-owner") == []
 
 
+def test_resource_count_is_owner_and_kind_scoped(tmp_path):
+    store = SQLiteStore(tmp_path / "state.db")
+    store.save("run-a", "owner-a", "run", {})
+    store.save("dataset-a", "owner-a", "dataset", {})
+    store.save("run-b", "owner-b", "run", {})
+    assert store.count("owner-a", "run") == 1
+    assert store.count("owner-a", "dataset") == 1
+    assert store.count("owner-b", "run") == 1
+    assert store.count("missing", "run") == 0
+
+
 def test_delete_runs_clears_only_owner_history(tmp_path):
     store = SQLiteStore(tmp_path / "state.db")
     store.save("run-a-1", "owner-a", "run", {})
@@ -158,6 +169,17 @@ def test_supabase_metadata_export_pages_with_owner_filter():
     assert [request.url.params["offset"] for request in calls] == ["0", "500"]
     assert all(request.url.params["owner_id"] == "eq.owner" for request in calls)
     assert all("storage" not in request.url.params["select"] for request in calls)
+
+
+def test_supabase_resource_count_uses_exact_owner_filtered_header():
+    def handle(request):
+        assert request.url.params["owner_id"] == "eq.owner"
+        assert request.url.params["kind"] == "eq.run"
+        assert request.url.params["limit"] == "0"
+        assert request.headers["prefer"] == "count=exact"
+        return httpx.Response(200, json=[], headers={"Content-Range": "*/42"})
+    store = SupabaseStore("https://example.supabase.co", "sb_secret_test", httpx.MockTransport(handle))
+    assert store.count("owner", "run") == 42
 
 
 def test_supabase_delete_runs_enumerates_owner_history_only():

@@ -72,6 +72,9 @@ class MemoryStore:
     def list(self, owner, kind):
         return []
 
+    def count(self, owner, kind):
+        return 0
+
     def metadata(self, identifier, owner, kind):
         return None
 
@@ -179,6 +182,11 @@ class SQLiteStore:
         with self.connect() as db:
             rows = db.execute("SELECT id,metadata,updated_at FROM resources WHERE owner=? AND kind=? ORDER BY updated_at DESC LIMIT 30", (owner, kind)).fetchall()
         return [{"id": r["id"], "metadata": json.loads(r["metadata"]), "updated_at": r["updated_at"]} for r in rows]
+
+    def count(self, owner, kind):
+        with self.connect() as db:
+            row = db.execute("SELECT count(*) AS total FROM resources WHERE owner=? AND kind=?", (owner, kind)).fetchone()
+        return int(row["total"])
 
     def metadata(self, identifier, owner, kind):
         with self.connect() as db:
@@ -328,6 +336,16 @@ class SupabaseStore:
 
     def list(self, owner, kind):
         return self.request("GET", "/rest/v1/daisy_resources", params={"owner_id": f"eq.{owner}", "kind": f"eq.{kind}", "select": "id,metadata,updated_at", "order": "updated_at.desc", "limit": "30"}).json()
+
+    def count(self, owner, kind):
+        response = self.request("GET", "/rest/v1/daisy_resources", params={
+            "owner_id": f"eq.{owner}", "kind": f"eq.{kind}", "select": "id", "limit": "0",
+        }, headers={"Prefer": "count=exact"})
+        content_range = response.headers.get("content-range", "")
+        try:
+            return int(content_range.rsplit("/", 1)[1])
+        except (IndexError, ValueError) as exc:
+            raise PersistenceError("Durable storage returned an invalid resource count") from exc
 
     def metadata(self, identifier, owner, kind):
         rows = self.request("GET", "/rest/v1/daisy_resources", params={**self.filters(identifier, owner, kind), "select": "metadata"}).json()
