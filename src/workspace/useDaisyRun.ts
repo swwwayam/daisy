@@ -144,6 +144,7 @@ export function useDaisyRun() {
   const [historyNextOffset, setHistoryNextOffset] = useState<number | null>(null);
   const [historyRetentionDays, setHistoryRetentionDays] = useState(0);
   const [historyPruned, setHistoryPruned] = useState(0);
+  const [historyTotal, setHistoryTotal] = useState(0);
   const historyOffsetRef = useRef(0);
   const historyBusy = useRef(false);
   const historyRequest = useRef(0);
@@ -163,6 +164,7 @@ export function useDaisyRun() {
       setHistoryNextOffset(result.next_offset);
       setHistoryRetentionDays(result.retention_days);
       setHistoryPruned(result.pruned);
+      setHistoryTotal(result.total);
       setHistoryOffset(offset);
       historyOffsetRef.current = offset;
     } catch (e) {
@@ -236,6 +238,7 @@ export function useDaisyRun() {
       setSavedRuns([]);
       setHistoryOffset(0);
       setHistoryNextOffset(null);
+      setHistoryTotal(0);
       setHistoryLoading(false);
       return result.deleted;
     } catch (e) {
@@ -489,5 +492,5 @@ export function useDaisyRun() {
 
   const reset = useCallback(() => setS(initialState), []);
 
-  return { state: s, savedRuns, historyError, historyLoading, historyDurable, historyOffset, historyNextOffset, historyRetentionDays, historyPruned, loadHistory, restore, deleteSavedRun, clearSavedRuns, acceptedModels, upload, reviewInput, runCleaning, runEda, runFeature, selectTarget, runSelection, runTraining, runEvaluation, sendChat, download, reset, setStatus };
+  return { state: s, savedRuns, historyError, historyLoading, historyDurable, historyOffset, historyNextOffset, historyRetentionDays, historyPruned, historyTotal, loadHistory, restore, deleteSavedRun, clearSavedRuns, acceptedModels, upload, reviewInput, runCleaning, runEda, runFeature, selectTarget, runSelection, runTraining, runEvaluation, sendChat, download, reset, setStatus };
 }

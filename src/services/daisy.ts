@@ -241,7 +241,7 @@ export const daisy = {
       method: "PUT", headers: await authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ enabled, sensitive_columns: sensitiveColumns }),
     }));
   },
-  async savedRuns(offset = 0): Promise<{ runs: SavedRun[]; durable: boolean; next_offset: number | null; retention_days: number; pruned: number }> {
+  async savedRuns(offset = 0): Promise<{ runs: SavedRun[]; durable: boolean; next_offset: number | null; retention_days: number; pruned: number; total: number }> {
     return json(await fetch(`${BASE_URL}/runs?limit=20&offset=${offset}`, { headers: await authHeaders() }));
   },
 
