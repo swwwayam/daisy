@@ -29,6 +29,7 @@ def test_paginated_history_is_compact_private_and_complete(tmp_path):
             assert response.status_code == 200
             body = response.json()
             assert body["durable"] is True
+            assert body["total"] == 45
             assert len(body["runs"]) <= 20
             assert "private" not in response.text
             ids.extend(row["id"] for row in body["runs"])
@@ -59,6 +60,7 @@ def test_history_prunes_expired_runs_before_listing(tmp_path):
     with patch.object(main, "resource_store", store), patch.object(main, "RUN_RETENTION_DAYS", 30):
         result = main.list_saved_runs(request, limit=20, offset=0)
     assert result["retention_days"] == 30 and result["pruned"] == 1
+    assert result["total"] == 1
     assert [run["id"] for run in result["runs"]] == ["future"]
     assert store.get("expired", "owner", "run") is None
 

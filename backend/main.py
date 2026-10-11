@@ -888,10 +888,11 @@ def list_saved_runs(request: Request, limit: int = Query(20, ge=1, le=50), offse
     owner = authenticated_user_id(request)
     cutoff = retention_cutoff(RUN_RETENTION_DAYS)
     pruned = resource_store.prune_runs(owner, cutoff) if cutoff else 0
+    total = resource_store.count(owner, "run")
     rows = resource_store.list_runs(owner, limit + 1, offset)
     return {"runs": rows[:limit], "durable": resource_store.enabled,
             "next_offset": offset + limit if len(rows) > limit else None,
-            "retention_days": RUN_RETENTION_DAYS, "pruned": pruned}
+            "retention_days": RUN_RETENTION_DAYS, "pruned": pruned, "total": total}
 
 
 @app.delete("/runs")
