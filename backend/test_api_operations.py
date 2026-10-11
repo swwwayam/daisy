@@ -60,6 +60,7 @@ class HealthEndpointTests(unittest.TestCase):
             patch.object(main, "SUPABASE_PUBLISHABLE_KEY", "configured"),
             patch.object(main, "GROQ_API_KEY", "configured"),
             patch.object(main, "MAX_UPLOAD_BYTES", 50 * 1024 * 1024),
+            patch.object(main, "RUN_RETENTION_DAYS", 90),
             patch.object(main, "CORS_ORIGINS", ["https://app.daisy.example"]),
             TestClient(main.app) as client,
         ):
@@ -76,6 +77,23 @@ class HealthEndpointTests(unittest.TestCase):
             "upload_limit": True,
             "allowed_browser_origins": True,
         })
+        self.assertEqual(response.json()["configuration"], {
+            "durable_storage": False,
+            "upload_limit_mb": 50,
+            "run_retention_days": 90,
+        })
+
+    def test_operational_settings_never_include_secrets_or_allowed_origins(self):
+        with (
+            patch.object(main, "SUPABASE_PUBLISHABLE_KEY", "do-not-expose"),
+            patch.object(main, "GROQ_API_KEY", "do-not-expose"),
+            patch.object(main, "CORS_ORIGINS", ["https://private.example"]),
+            patch.object(main, "RUN_RETENTION_DAYS", 30),
+        ):
+            settings = main.operational_settings()
+        self.assertEqual(settings["run_retention_days"], 30)
+        self.assertNotIn("do-not-expose", str(settings))
+        self.assertNotIn("private.example", str(settings))
 
     def test_readiness_returns_503_when_a_dependency_is_unconfigured(self):
         with (

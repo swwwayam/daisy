@@ -555,6 +555,15 @@ def readiness_checks() -> dict[str, bool]:
     return checks
 
 
+def operational_settings() -> dict[str, int | bool]:
+    """Expose safe deployment policy values without returning secrets or origins."""
+    return {
+        "durable_storage": resource_store.enabled,
+        "upload_limit_mb": MAX_UPLOAD_BYTES // (1024 * 1024),
+        "run_retention_days": RUN_RETENTION_DAYS,
+    }
+
+
 @app.get("/health/ready")
 def readiness_check():
     """Tell an orchestrator whether this instance can accept application traffic."""
@@ -567,6 +576,7 @@ def readiness_check():
             "service": "daisy-api",
             "version": app.version,
             "checks": checks,
+            "configuration": operational_settings(),
         },
         headers=HEALTH_CACHE_HEADERS,
     )

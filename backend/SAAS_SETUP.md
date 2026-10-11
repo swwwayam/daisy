@@ -177,9 +177,14 @@ use transactional reservations across workers. Memory-mode counters are demo-onl
 Contexts exceeding 32 KB are rejected before transmission. Agent output limits are
 bounded to 1,200 or 2,500 tokens; interactive chat is bounded to 512 tokens.
 
-Cloud retention automation, account data deletion/export, billing, and workspace
-sharing still need a separate implementation. Do not describe this runtime as a
-complete production SaaS merely because these controls are present.
+Saved-run retention is configured with `DAISY_RUN_RETENTION_DAYS`; zero disables
+it, while a positive value removes an owner's expired dashboard snapshots when
+that owner loads history. `/health/ready` reports the active retention window,
+upload limit, and whether durable storage is enabled without exposing secrets or
+allowed origins. Account metadata can be exported, but full dataset/model deletion,
+binary retention automation, billing, and workspace sharing still need separate
+implementations. Do not describe this runtime as a complete production SaaS merely
+because these controls are present.
 
 Design references: [Supabase private downloads](https://supabase.com/docs/guides/storage/serving/downloads)
 and [scikit-learn evaluation guidance](https://scikit-learn.org/stable/modules/cross_validation.html).
