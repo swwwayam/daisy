@@ -12,7 +12,7 @@ implementation and relevant checks pass; cloud verification is recorded separate
    the application cannot guarantee that a user has supplied genuinely unseen data.
 3. Implemented, local tests passed: append-only experiment records, owner-filtered
    retrieval independent of the current run, durable atomic holdout claims, restart
-   recovery, paginated experiment history UI, and a downloadable final diagnostics
+   recovery, paginated experiment history with exact owner-scoped totals, and a downloadable final diagnostics
    JSON report. Apply migration
    `202610030001_experiment_finalization.sql` before using Supabase persistence.
 4. Partially implemented: bounded DataFrame/source caches with active leases,

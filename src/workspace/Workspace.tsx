@@ -956,6 +956,7 @@ function ExperimentHistory({ latest }: { latest?: string }) {
   const [rows, setRows] = useState<ExperimentSummary[]>([]);
   const [offset, setOffset] = useState(0);
   const [next, setNext] = useState<number | null>(null);
+  const [total, setTotal] = useState(0);
   const [refresh, setRefresh] = useState(0);
   const [selected, setSelected] = useState("");
   const [record, setRecord] = useState<ExperimentRecord | null>(null);
@@ -968,7 +969,7 @@ function ExperimentHistory({ latest }: { latest?: string }) {
     let active = true;
     setLoading(true); setError("");
     daisy.experiments(offset).then(result => {
-      if (active) { setRows(result.experiments); setNext(result.next_offset); setDurable(result.durable); }
+      if (active) { setRows(result.experiments); setNext(result.next_offset); setDurable(result.durable); setTotal(result.total); }
     }).catch(err => { if (active) setError(err.message); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [open, offset, refresh, latest]);
@@ -994,6 +995,7 @@ function ExperimentHistory({ latest }: { latest?: string }) {
         <button className="pill" disabled={loading || recordLoading} onClick={() => setRefresh(value => value + 1)}>Refresh experiments</button>
       </div>
       {loading || recordLoading ? <p role="status">Loading experiments…</p> : !rows.length && <p>No experiments on this page.</p>}
+      {!loading && rows.length > 0 && <p role="status">Showing experiments {offset + 1}–{offset + rows.length} of {total}.</p>}
       {!durable && <p>Demo mode: experiments last until the backend restarts.</p>}
       {error && <p role="alert">{error}</p>}
       {record && <div className="experiment-detail">

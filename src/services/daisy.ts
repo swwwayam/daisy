@@ -221,7 +221,7 @@ export const daisy = {
       method: "POST", headers: await authHeaders(), body: form,
     }));
   },
-  async experiments(offset = 0): Promise<{ experiments: ExperimentSummary[]; next_offset: number | null; durable: boolean }> {
+  async experiments(offset = 0): Promise<{ experiments: ExperimentSummary[]; next_offset: number | null; durable: boolean; total: number }> {
     return json(await fetch(`${BASE_URL}/experiments?offset=${offset}`, { headers: await authHeaders() }));
   },
   async experiment(id: string): Promise<ExperimentRecord> {
