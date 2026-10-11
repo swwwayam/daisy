@@ -178,6 +178,22 @@ def test_supabase_delete_runs_enumerates_owner_history_only():
     assert all(call.url.params["owner_id"] == "eq.owner" and call.url.params["kind"] == "eq.run" for call in deletes)
 
 
+def test_supabase_run_cleanup_pages_beyond_service_row_limit():
+    calls = []
+    def handle(request):
+        calls.append(request)
+        offset = int(request.url.params["offset"])
+        count = 500 if offset == 0 else 1
+        return httpx.Response(200, json=[{"id": f"run-{offset + index}"} for index in range(count)])
+    store = SupabaseStore("https://example.supabase.co", "sb_secret_test", httpx.MockTransport(handle))
+    deleted = []
+    with patch.object(store, "delete", side_effect=lambda identifier, owner, kind: deleted.append((identifier, owner, kind)) or True):
+        assert store.delete_runs("owner") == 501
+    assert len(deleted) == 501
+    assert [request.url.params["offset"] for request in calls] == ["0", "500"]
+    assert all(request.url.params["limit"] == "500" for request in calls)
+
+
 def test_supabase_prune_runs_filters_cutoff_before_deleting():
     calls = []
     def handle(request):

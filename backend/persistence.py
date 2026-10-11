@@ -368,27 +368,30 @@ class SupabaseStore:
 
     def delete_runs(self, owner):
         """Delete the owner's currently listed run IDs without touching later resources."""
-        rows = self.request("GET", "/rest/v1/daisy_resources", params={
-            "owner_id": f"eq.{owner}", "kind": "eq.run", "select": "id", "order": "id.asc",
-        }).json()
+        identifiers = self.resource_ids(owner, "run")
         deleted = 0
-        for row in rows:
-            deleted += int(self.delete(row["id"], owner, "run"))
+        for identifier in identifiers:
+            deleted += int(self.delete(identifier, owner, "run"))
         return deleted
 
     def prune_runs(self, owner, before):
         """Enumerate the cutoff set first so concurrent new snapshots are never removed."""
+        identifiers = self.resource_ids(owner, "run", before=before)
+        return sum(int(self.delete(identifier, owner, "run")) for identifier in identifiers)
+
+    def resource_ids(self, owner, kind, *, before=None):
+        """Page through a stable owner/type listing instead of accepting PostgREST's row cap."""
         identifiers, offset, page_size = [], 0, 500
         while True:
-            page = self.request("GET", "/rest/v1/daisy_resources", params={
-                "owner_id": f"eq.{owner}", "kind": "eq.run", "updated_at": f"lt.{before}",
-                "select": "id", "order": "id.asc", "limit": str(page_size), "offset": str(offset),
-            }).json()
+            params = {"owner_id": f"eq.{owner}", "kind": f"eq.{kind}", "select": "id",
+                      "order": "id.asc", "limit": str(page_size), "offset": str(offset)}
+            if before is not None:
+                params["updated_at"] = f"lt.{before}"
+            page = self.request("GET", "/rest/v1/daisy_resources", params=params).json()
             identifiers.extend(row["id"] for row in page)
             if len(page) < page_size:
-                break
+                return identifiers
             offset += page_size
-        return sum(int(self.delete(identifier, owner, "run")) for identifier in identifiers)
 
     def list_runs(self, owner, limit, offset):
         # Project JSON fields in Postgres: full snapshots never cross the history boundary.
