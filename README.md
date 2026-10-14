@@ -1,5 +1,43 @@
 # D.A.I.S.Y.
 
+## Convex runtime
+
+DAISY uses Convex Better Auth for Google/email login, Convex database for
+owner-scoped resource records, run history, immutable experiments, final
+evaluation gates, usage budgets and atomic training jobs, and Convex file
+storage for CSVs, dataset snapshots, reports and downloadable model packages.
+Python still performs ML computation; local artifacts are a cache of cloud files.
+
+Set `DAISY_AUTH_PROVIDER=convex`, `DAISY_PERSISTENCE=convex`,
+`CONVEX_SITE_URL` and `DAISY_BACKEND_SECRET` in `backend/.env`.
+The same private `DAISY_BACKEND_SECRET` must be set on the Convex deployment.
+This key belongs only on the server; never use a `VITE_` variable for it.
+Frontend `.env.local` needs `VITE_CONVEX_URL` and `VITE_CONVEX_SITE_URL`.
+Google client credentials and `BETTER_AUTH_SECRET` belong in Convex environment variables.
+
+After `npx convex dev --once`, run three VS Code terminals:
+
+```powershell
+# Project root: frontend
+npm run dev
+```
+
+```powershell
+# backend directory: API
+.\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+```powershell
+# backend directory: separate ML worker (same .env)
+.\.venv\Scripts\python.exe worker.py
+```
+
+Run `npm run test:convex` for the Convex security/queue/budget regressions.
+Legacy Supabase and SQLite adapters remain available for rollback, but are
+inactive when persistence is set to Convex. Old Supabase accounts/data are
+not automatically imported; migrating existing resources requires an explicit
+mapping from old owner IDs to their new Convex identities.
+
 **D.A.I.S.Y. --- Data Analysis & Intelligent System for You** is an
 automated machine-learning pipeline designed to take a user's dataset
 through the major stages of an ML workflow with minimal manual
