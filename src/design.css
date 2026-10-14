@@ -26,6 +26,11 @@
 html { scroll-behavior: smooth; scroll-padding-top: 96px; }
 body { margin: 0; background: var(--surface); color: var(--text); -webkit-font-smoothing: antialiased; }
 button, input, select, textarea { font: inherit; }
+/* Native popup menus need opaque colors; a select's translucent background
+   does not carry into the Windows option list. */
+select { color-scheme: dark; }
+select option, select optgroup { background-color: #17141f; color: #fff; }
+select option:disabled { color: #a29aaa; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; }
