@@ -5,7 +5,7 @@
  */
 import { getAccessToken } from "./auth";
 
-const BASE_URL = (import.meta.env.VITE_DAISY_API_URL as string | undefined)?.replace(/\/$/, "") || "http://localhost:8000";
+const BASE_URL = (import.meta.env.VITE_DAISY_API_URL as string | undefined)?.trim().replace(/\/$/, "") || "http://localhost:8000";
 
 export class DaisyApiError extends Error {
   status: number;

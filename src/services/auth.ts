@@ -2,7 +2,7 @@ import { createAuthClient } from "better-auth/react";
 import { convexClient, crossDomainClient } from "@convex-dev/better-auth/client/plugins";
 import type { AuthClient } from "@convex-dev/better-auth/react";
 
-const baseURL = import.meta.env.VITE_CONVEX_SITE_URL as string | undefined;
+const baseURL = (import.meta.env.VITE_CONVEX_SITE_URL as string | undefined)?.trim();
 
 if (!baseURL) {
   throw new Error("Convex Auth is not configured. Add VITE_CONVEX_SITE_URL to .env.local.");
