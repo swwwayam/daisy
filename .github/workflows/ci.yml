@@ -12,8 +12,9 @@ jobs:
     name: Frontend build
     runs-on: ubuntu-latest
     env:
-      VITE_SUPABASE_URL: https://example.supabase.co
-      VITE_SUPABASE_PUBLISHABLE_KEY: ci-publishable-key
+      VITE_CONVEX_URL: https://ci-example.convex.cloud
+      VITE_CONVEX_SITE_URL: https://ci-example.convex.site
+      VITE_DAISY_API_URL: https://api.daisy.example
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,6 +23,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - run: npx tsc -p convex/tsconfig.json --noEmit
+      - run: npm run test:convex
       - run: npm run build
 
   backend:
