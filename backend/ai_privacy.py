@@ -113,6 +113,8 @@ class SupabaseBudget:
 
 
 def build_budget(store):
+    from convex_store import ConvexStore, ConvexBudget
+    if isinstance(store, ConvexStore): return ConvexBudget(store)
     if isinstance(store, SQLiteStore): return SQLiteBudget(store.path)
     if isinstance(store, SupabaseStore): return SupabaseBudget(store)
     return MemoryBudget()

@@ -46,6 +46,9 @@ class RequestTracingTests(unittest.TestCase):
 
 
 class HealthEndpointTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch.object(main, "AUTH_PROVIDER", "supabase"))
+
     def test_liveness_is_public_and_identifies_the_service(self):
         with TestClient(main.app) as client:
             response = client.get("/health/live")
@@ -72,6 +75,7 @@ class HealthEndpointTests(unittest.TestCase):
         self.assertEqual(response.json()["version"], main.app.version)
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(response.json()["checks"], {
+            "authentication": True,
             "supabase_auth": True,
             "groq_inference": True,
             "upload_limit": True,
@@ -82,6 +86,17 @@ class HealthEndpointTests(unittest.TestCase):
             "upload_limit_mb": 50,
             "run_retention_days": 90,
         })
+
+    def test_convex_readiness_does_not_require_legacy_supabase_configuration(self):
+        with (patch.object(main, "AUTH_PROVIDER", "convex"),
+              patch.object(main, "CONVEX_SITE_URL", "https://example.convex.site"),
+              patch.object(main, "SUPABASE_URL", ""),
+              patch.object(main, "SUPABASE_PUBLISHABLE_KEY", ""),
+              patch.object(main, "GROQ_API_KEY", "configured")):
+            checks = main.readiness_checks()
+        self.assertTrue(checks["authentication"])
+        self.assertTrue(checks["convex_auth"])
+        self.assertNotIn("supabase_auth", checks)
 
     def test_operational_settings_never_include_secrets_or_allowed_origins(self):
         with (

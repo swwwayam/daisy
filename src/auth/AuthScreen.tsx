@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowLeft, ArrowRight, Eye, EyeSlash, GoogleLogo } from "@phosphor-icons/react";
 import ParticleScene, { type ScenePose } from "../experience/ParticleScene";
-import { supabase } from "../services/supabase";
+import { authClient } from "../services/auth";
 
 type Mode = "signin" | "signup";
 
@@ -36,18 +36,16 @@ export default function AuthScreen({ onBack }: { onBack: () => void }) {
     setNotice("");
     try {
       if (mode === "signup") {
-        const { data, error: authError } = await supabase.auth.signUp({
+        const { error: authError } = await authClient.signUp.email({
+          name: name.trim(),
           email,
           password,
-          options: {
-            data: { display_name: name.trim() },
-            emailRedirectTo: window.location.origin,
-          },
+          callbackURL: window.location.origin,
         });
         if (authError) throw authError;
-        if (!data.session) setNotice("Check your inbox to confirm your account, then return here to sign in.");
+        setNotice("Your workspace is ready. Signing you in…");
       } else {
-        const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+        const { error: authError } = await authClient.signIn.email({ email, password });
         if (authError) throw authError;
       }
     } catch (reason) {
@@ -60,12 +58,12 @@ export default function AuthScreen({ onBack }: { onBack: () => void }) {
   async function continueWithGoogle() {
     setBusy(true);
     setError("");
-    const { error: authError } = await supabase.auth.signInWithOAuth({
+    const { error: authError } = await authClient.signIn.social({
       provider: "google",
-      options: { redirectTo: window.location.origin },
+      callbackURL: window.location.origin,
     });
     if (authError) {
-      setError(authError.message);
+      setError(authError.message || "Google sign-in is not configured yet.");
       setBusy(false);
     }
   }

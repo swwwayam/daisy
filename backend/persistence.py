@@ -429,4 +429,7 @@ def build_store():
         return SQLiteStore(os.getenv("DAISY_STATE_DB", str(Path(__file__).with_name("state") / "daisy.sqlite")))
     if mode == "supabase":
         return SupabaseStore(os.getenv("SUPABASE_URL", ""), os.getenv("SUPABASE_SECRET_KEY", ""))
-    raise PersistenceError("DAISY_PERSISTENCE must be memory, sqlite, or supabase")
+    if mode == "convex":
+        from convex_store import ConvexStore
+        return ConvexStore(os.getenv("CONVEX_SITE_URL", ""), os.getenv("DAISY_BACKEND_SECRET", ""))
+    raise PersistenceError("DAISY_PERSISTENCE must be memory, sqlite, supabase, or convex")

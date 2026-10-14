@@ -116,6 +116,9 @@ class SupabaseQueue:
 
 
 def build_queue(store):
+    from convex_store import ConvexStore, ConvexQueue
+    if isinstance(store, ConvexStore):
+        return ConvexQueue(store)
     if isinstance(store, SupabaseStore):
         return SupabaseQueue(store)
     if isinstance(store, SQLiteStore):

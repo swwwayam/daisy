@@ -76,7 +76,7 @@ def process_job(queue, job, timeout=600, runner=subprocess.Popen, worker_id=None
 def main_loop():
     import main
     if main.job_queue is None:
-        raise SystemExit("Enable sqlite or supabase persistence before starting the worker.")
+        raise SystemExit("Enable convex, sqlite, or supabase persistence before starting the worker.")
     print("DAISY training worker ready; one fit at a time, 10 minute job limit.", flush=True)
     worker_id = worker_identity()
     heartbeat_at = 0

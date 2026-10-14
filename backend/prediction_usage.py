@@ -12,7 +12,10 @@ class PredictionUsage:
         self.lock = threading.Lock()
 
     def reserve(self, store, owner, rows):
-        if isinstance(store, SupabaseStore):
+        from convex_store import ConvexStore
+        if isinstance(store, ConvexStore):
+            accepted = store.rpc("reservePrediction", owner=owner, amount=rows)["accepted"]
+        elif isinstance(store, SupabaseStore):
             reply = store.request("POST", "/rest/v1/rpc/daisy_reserve_prediction", json={"p_owner": owner, "p_rows": rows}).json()
             accepted = reply["accepted"]
         elif isinstance(store, SQLiteStore):

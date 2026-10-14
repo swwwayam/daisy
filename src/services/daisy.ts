@@ -3,7 +3,7 @@
  * All backend communication is isolated here — visual components never call fetch directly.
  * Contract per daisy-api-spec.md. Base URL configurable via VITE_DAISY_API_URL.
  */
-import { supabase } from "./supabase";
+import { getAccessToken } from "./auth";
 
 const BASE_URL = (import.meta.env.VITE_DAISY_API_URL as string | undefined)?.replace(/\/$/, "") || "http://localhost:8000";
 
@@ -33,10 +33,14 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 async function authHeaders(extra?: HeadersInit): Promise<Headers> {
-  const { data } = await supabase.auth.getSession();
-  if (!data.session?.access_token) throw new DaisyApiError("Your session has expired. Sign in again.", 401);
+  let accessToken: string;
+  try {
+    accessToken = await getAccessToken();
+  } catch {
+    throw new DaisyApiError("Your session has expired. Sign in again.", 401);
+  }
   const headers = new Headers(extra);
-  headers.set("Authorization", `Bearer ${data.session.access_token}`);
+  headers.set("Authorization", `Bearer ${accessToken}`);
   return headers;
 }
 

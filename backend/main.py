@@ -42,12 +42,16 @@ import os
 import re
 import uuid
 import threading
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from time import perf_counter
 from typing import Literal
 
 import pandas as pd
 import numpy as np
 import httpx
+import jwt
+from jwt import InvalidTokenError, PyJWKClient
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -94,7 +98,7 @@ RUN_RETENTION_DAYS = parse_retention_days(os.getenv("DAISY_RUN_RETENTION_DAYS"))
 resource_store = build_store()
 job_queue = build_queue(resource_store)
 if os.getenv("DAISY_ENV") == "production" and (not resource_store.enabled or job_queue is None):
-    raise RuntimeError("Production requires sqlite or supabase persistence and a separate training worker.")
+    raise RuntimeError("Production requires durable persistence (Convex, SQLite, or Supabase) and a separate training worker.")
 ai_budget = build_budget(resource_store)
 USER_AI_SETTINGS: dict[str, dict] = {}
 experiment_registry = ExperimentRegistry()
@@ -115,6 +119,9 @@ async def cache_full(request: Request, exc: CacheCapacityError):
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
+CONVEX_SITE_URL = os.getenv("CONVEX_SITE_URL", "").rstrip("/")
+AUTH_PROVIDER = os.getenv("DAISY_AUTH_PROVIDER", "convex").strip().lower()
+CONVEX_JWKS = PyJWKClient(f"{CONVEX_SITE_URL}/api/auth/convex/jwks") if CONVEX_SITE_URL else None
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "50")) * 1024 * 1024
@@ -151,7 +158,31 @@ def normalize_request_id(candidate: str | None) -> str:
 
 
 async def validate_access_token(token: str) -> dict:
-    """Ask Supabase Auth to validate the session token and return its user."""
+    """Validate the configured identity provider token and normalize its user."""
+    if AUTH_PROVIDER == "convex":
+        if not CONVEX_SITE_URL or CONVEX_JWKS is None:
+            raise HTTPException(status_code=503, detail="Convex authentication is not configured on the backend.")
+        try:
+            signing_key = await run_in_threadpool(CONVEX_JWKS.get_signing_key_from_jwt, token)
+            claims = jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=["RS256"],
+                audience="convex",
+                issuer=CONVEX_SITE_URL,
+                leeway=30,
+            )
+        except InvalidTokenError as exc:
+            raise HTTPException(status_code=401, detail="Invalid or expired session. Sign in again.") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Authentication service is temporarily unavailable.") from exc
+        subject = claims.get("sub")
+        if not subject:
+            raise HTTPException(status_code=401, detail="Convex returned an invalid user session.")
+        return {"id": subject, "email": claims.get("email"), "name": claims.get("name")}
+
+    if AUTH_PROVIDER != "supabase":
+        raise HTTPException(status_code=503, detail="Unsupported authentication provider configuration.")
     if not SUPABASE_URL or not SUPABASE_PUBLISHABLE_KEY:
         raise HTTPException(status_code=503, detail="Supabase authentication is not configured on the backend.")
     try:
@@ -223,7 +254,7 @@ def evict_dataset_cache(identifier):
 DATASETS = ResourceCache(int(os.getenv("DAISY_CACHE_MB", "512")) * 1024 * 1024, 256,
                         size=lambda frame: frame.memory_usage(deep=True).sum(),
                         can_evict=lambda: resource_store.enabled, on_evict=evict_dataset_cache)
-RAW_UPLOADS = ResourceCache(64 * 1024 * 1024, 256, size=len, can_evict=lambda: False)
+RAW_UPLOADS = ResourceCache(64 * 1024 * 1024, 256, size=len, can_evict=lambda: resource_store.enabled)
 DATASET_OWNERS = ResourceOwners()
 
 
@@ -266,10 +297,10 @@ DATASET_TRANSFORMS: dict[str, list] = {}
 DATASET_DETAILS: dict[str, dict] = {}
 
 
-def persist_dataset(dataset_id: str, update_settings=False):
+def persist_dataset(dataset_id: str, update_settings=False, *, metadata_only=False, new=False):
     if not resource_store.enabled:
         return
-    if not update_settings:
+    if not update_settings and not new:
         saved = resource_store.metadata(dataset_id, DATASET_OWNERS.owner(dataset_id), "dataset")
         if saved:
             DATASET_DETAILS[dataset_id] = saved.get("details", {})
@@ -279,6 +310,9 @@ def persist_dataset(dataset_id: str, update_settings=False):
     metadata = {"parent": DATASET_PARENTS.get(dataset_id), "steps": steps,
                 "context": PIPELINE_CONTEXT.get(dataset_id, {}), "details": DATASET_DETAILS.get(dataset_id, {})}
     metadata = json_safe(metadata)
+    if metadata_only and hasattr(resource_store, "update_metadata"):
+        resource_store.update_metadata(dataset_id, DATASET_OWNERS.owner(dataset_id), "dataset", metadata)
+        return
     resource_store.save(dataset_id, DATASET_OWNERS.owner(dataset_id), "dataset", metadata,
                         DATASETS[dataset_id].to_json(orient="table", date_format="iso", double_precision=15).encode())
 
@@ -292,7 +326,7 @@ def create_derived_dataset(parent_id: str, owner_id: str, df: pd.DataFrame, step
     DATASET_PARENTS[dataset_id] = parent_id
     DATASET_TRANSFORMS[dataset_id] = steps
     DATASET_DETAILS[dataset_id] = dict(DATASET_DETAILS.get(parent_id, {}))
-    persist_dataset(dataset_id)
+    persist_dataset(dataset_id, new=True)
     return dataset_id
 
 
@@ -333,8 +367,8 @@ def save_pipeline_result(dataset_id: str, stage: str, result: dict, child_datase
         # pipeline story without duplicating mutable result objects.
         PIPELINE_CONTEXT[child_dataset_id] = dict(PIPELINE_CONTEXT.get(dataset_id, {}))
         PIPELINE_CONTEXT[child_dataset_id][stage] = result
-        persist_dataset(child_dataset_id)
-    persist_dataset(dataset_id)
+        persist_dataset(child_dataset_id, metadata_only=True)
+    persist_dataset(dataset_id, metadata_only=True)
 
 
 def get_pipeline_context(dataset_id: str) -> dict:
@@ -538,11 +572,15 @@ def liveness_check():
 def readiness_checks() -> dict[str, bool]:
     """Configuration plus live storage/worker checks for durable deployments."""
     checks = {
-        "supabase_auth": bool(SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY),
+        "authentication": (
+            bool(CONVEX_SITE_URL) if AUTH_PROVIDER == "convex"
+            else bool(SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY)
+        ),
         "groq_inference": bool(GROQ_API_KEY),
         "upload_limit": MAX_UPLOAD_BYTES > 0,
         "allowed_browser_origins": bool(CORS_ORIGINS),
     }
+    checks[f"{AUTH_PROVIDER}_auth"] = checks["authentication"]
     if resource_store.enabled:
         try:
             checks["durable_storage"] = resource_store.probe()
@@ -612,6 +650,11 @@ async def upload_dataset(request: Request, file: UploadFile = File(...)):
             detail=f"Dataset exceeds the {limit_mb} MB upload limit."
         )
 
+    return await run_in_threadpool(process_dataset_upload, raw_bytes, file.filename, owner_id)
+
+
+def process_dataset_upload(raw_bytes: bytes, filename: str | None, owner_id: str):
+    """CSV parsing/cloud writes must not block the API event loop."""
     try:
         df, policy = read_source(raw_bytes)
 
@@ -638,14 +681,24 @@ async def upload_dataset(request: Request, file: UploadFile = File(...)):
         raise
     DATASET_OWNERS.register(dataset_id, owner_id)
     DATASET_TRANSFORMS[dataset_id] = [policy]
-    DATASET_DETAILS[dataset_id] = {"filename": file.filename, "source_available": True}
-    if resource_store.enabled:
-        resource_store.save(f"source-{dataset_id}", owner_id, "dataset", {"source_csv": True}, raw_bytes)
-    persist_dataset(dataset_id)
+    DATASET_DETAILS[dataset_id] = {"filename": filename, "source_available": True}
+    if resource_store.enabled and getattr(resource_store, "parallel_uploads", False):
+        # Preserve the request's cache lease in both threads. The independent
+        # original CSV and interpreted snapshot transfers can overlap safely.
+        with ThreadPoolExecutor(max_workers=2) as transfers:
+            source_write = transfers.submit(copy_context().run, resource_store.save,
+                f"source-{dataset_id}", owner_id, "dataset", {"source_csv": True}, raw_bytes)
+            snapshot_write = transfers.submit(copy_context().run, persist_dataset, dataset_id, new=True)
+            source_write.result()
+            snapshot_write.result()
+    else:
+        if resource_store.enabled:
+            resource_store.save(f"source-{dataset_id}", owner_id, "dataset", {"source_csv": True}, raw_bytes)
+        persist_dataset(dataset_id, new=True)
 
     schema_report = build_schema_report(df)
     schema_report["dataset_id"] = dataset_id
-    schema_report["filename"] = file.filename
+    schema_report["filename"] = filename
     schema_report["review_available"] = True
     schema_report["input_policy"] = policy
 
@@ -694,9 +747,17 @@ def source_bytes(dataset_id, owner):
     if not DATASET_DETAILS.get(root, {}).get("source_available"):
         raise HTTPException(status_code=409, detail="Original CSV is unavailable for this older upload. Upload it again to review raw values.")
     if resource_store.enabled:
+        if root in RAW_UPLOADS:
+            return RAW_UPLOADS[root]
         saved = resource_store.get(f"source-{root}", owner, "dataset")
         if not saved or saved["metadata"].get("source_csv") is not True:
             raise HTTPException(status_code=404, detail="Original CSV not found.")
+        # Original bytes are immutable. Cache them only after checking the
+        # dataset owner; cloud storage remains the durable source of truth.
+        try:
+            RAW_UPLOADS[root] = saved["blob"]
+        except CacheCapacityError:
+            pass
         return saved["blob"]
     if root not in RAW_UPLOADS:
         raise HTTPException(status_code=404, detail="Original CSV not found.")
@@ -754,7 +815,7 @@ def review_dataset(dataset_id: str, req: InputReview, request: Request):
     reviewed = create_derived_dataset(root, owner, frame, steps)
     DATASET_DETAILS[reviewed]["input_policy"] = policy
     DATASET_DETAILS[reviewed]["training_config"] = req.training_config.model_dump() if req.training_config else None
-    persist_dataset(reviewed, update_settings=True)
+    persist_dataset(reviewed, update_settings=True, metadata_only=True)
     return {**build_schema_report(frame), "dataset_id": reviewed, "source_dataset_id": root,
             "filename": DATASET_DETAILS.get(root, {}).get("filename"), "review_available": True, "input_policy": policy,
             "source_column_dtypes": source_dtypes,
@@ -838,7 +899,7 @@ def update_ai_settings(req: AISettingsRequest, request: Request, dataset_id: str
         if any(column not in DATASETS[root] for column in req.sensitive_columns):
             raise HTTPException(status_code=400, detail="Sensitive columns must belong to the original dataset.")
         DATASET_DETAILS.setdefault(root, {}).update(ai_enabled=req.enabled, sensitive_columns=req.sensitive_columns)
-        persist_dataset(root, update_settings=True)
+        persist_dataset(root, update_settings=True, metadata_only=True)
     else:
         settings = {"enabled": req.enabled}
         resource_store.save(f"ai-{owner}", owner, "preferences", settings)

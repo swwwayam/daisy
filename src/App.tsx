@@ -1,34 +1,23 @@
 import { useEffect, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
 import Landing from "./experience/Experience";
 import Workspace from "./workspace/Workspace";
 import AuthScreen from "./auth/AuthScreen";
 import CustomCursor from "./components/CustomCursor";
-import { supabase } from "./services/supabase";
+import { authClient } from "./services/auth";
+import { useMutation } from "convex/react";
+import { api } from "../convex/_generated/api";
 
 export default function App() {
   const [view, setView] = useState<"landing" | "auth" | "workspace">("landing");
-  const [session, setSession] = useState<Session | null>(null);
-  const [sessionReady, setSessionReady] = useState(false);
+  const { data: session, isPending: sessionPending } = authClient.useSession();
+  const sessionReady = !sessionPending;
+  const ensurePersonalWorkspace = useMutation(api.accounts.ensurePersonalWorkspace);
 
   useEffect(() => {
-    let mounted = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (!mounted) return;
-      setSession(data.session);
-      setSessionReady(true);
-    });
-    const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
-      setSession(nextSession);
-      setSessionReady(true);
-      if (event === "SIGNED_IN") setView("workspace");
-      if (event === "SIGNED_OUT") setView("landing");
-    });
-    return () => {
-      mounted = false;
-      listener.subscription.unsubscribe();
-    };
-  }, []);
+    if (!session?.user) return;
+    setView("workspace");
+    void ensurePersonalWorkspace().catch(() => undefined);
+  }, [ensurePersonalWorkspace, session?.user]);
 
   function show(next: "landing" | "auth" | "workspace") {
     setView(next);
@@ -40,7 +29,8 @@ export default function App() {
   }
 
   async function signOut() {
-    await supabase.auth.signOut();
+    await authClient.signOut();
+    show("landing");
   }
 
   return <>

@@ -6,8 +6,11 @@ from persistence import SQLiteStore, SupabaseStore
 
 
 def snapshot(store, owner, ai_budget, prediction_usage, queue):
+    from convex_store import ConvexStore
     now = time.time()
-    if isinstance(store, SupabaseStore):
+    if isinstance(store, ConvexStore):
+        data = store.rpc("usage", owner=owner)
+    elif isinstance(store, SupabaseStore):
         data = store.request("POST", "/rest/v1/rpc/daisy_account_usage", json={"p_owner": owner}).json()
     elif isinstance(store, SQLiteStore):
         with store.connect() as db:
