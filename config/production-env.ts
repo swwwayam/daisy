@@ -5,7 +5,9 @@ export function validateProductionEnv(env: Record<string, string | undefined>) {
   for (const key of requiredUrls) {
     try {
       const url = new URL(env[key]?.trim() ?? "");
-      const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || url.hostname.endsWith(".localhost");
+      const hostname = url.hostname.replace(/\.$/, "");
+      const local = ["localhost", "0.0.0.0", "[::]", "[::1]"].includes(hostname)
+        || hostname.startsWith("127.") || hostname.endsWith(".localhost");
       if (url.protocol !== "https:" || local || url.username || url.password || url.search || url.hash) throw new Error("Invalid endpoint");
     } catch {
       // Report the variable name, never its value or embedded credentials.

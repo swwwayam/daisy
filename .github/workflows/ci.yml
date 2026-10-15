@@ -23,6 +23,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - run: npm run test:config
       - run: npx tsc -p convex/tsconfig.json --noEmit
       - run: npm run test:convex
       - run: npm run build

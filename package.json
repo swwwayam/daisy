@@ -7,6 +7,7 @@
     "dev": "vite",
     "convex:dev": "convex dev",
     "test:convex": "vitest run",
+    "test:config": "node --experimental-strip-types --test config/production-env.test.mjs",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
