@@ -2,6 +2,10 @@
 
 ## Convex runtime
 
+Signup and AI abuse controls are documented in [SECURITY.md](SECURITY.md).
+New accounts share a three-registration daily limit per network. Convex also
+enforces account burst limits, shared AI request/token caps and an admin AI pause switch.
+
 DAISY uses Convex Better Auth for Google/email login, Convex database for
 owner-scoped resource records, run history, immutable experiments, final
 evaluation gates, usage budgets and atomic training jobs, and Convex file
@@ -272,7 +276,8 @@ DAISY/
 │
 ├── src/
 │   ├── components/
-│   ├── imports/
+│   ├── auth/
+│   ├── experience/
 │   ├── services/
 │   └── workspace/
 │

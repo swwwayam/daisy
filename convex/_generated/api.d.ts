@@ -8,10 +8,12 @@
  * @module
  */
 
+import type * as abuseProtection from "../abuseProtection.js";
 import type * as accounts from "../accounts.js";
 import type * as auth from "../auth.js";
 import type * as backend from "../backend.js";
 import type * as http from "../http.js";
+import type * as ipIdentity from "../ipIdentity.js";
 
 import type {
   ApiFromModules,
@@ -20,10 +22,12 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  abuseProtection: typeof abuseProtection;
   accounts: typeof accounts;
   auth: typeof auth;
   backend: typeof backend;
   http: typeof http;
+  ipIdentity: typeof ipIdentity;
 }>;
 
 /**
@@ -54,4 +58,5 @@ export declare const internal: FilterApi<
 
 export declare const components: {
   betterAuth: import("@convex-dev/better-auth/_generated/component.js").ComponentApi<"betterAuth">;
+  rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
 };

@@ -2,6 +2,7 @@
 import { v } from "convex/values";
 import { internalMutation, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
+import { abuseLimiter, aiGlobalTokenLimit } from "./abuseProtection";
 
 const kind = v.union(v.literal("dataset"), v.literal("artifact"), v.literal("run"), v.literal("preferences"), v.literal("experiment"));
 const operations = v.union(...["probe", "upload", "discard", "save", "updateMetadata", "get", "page", "count", "remove", "finalization", "claimFinalization", "finishFinalization", "heartbeat", "workerReady", "enqueue", "job", "claimJob", "finishJob", "cancelJob", "reserveAi", "settleAi", "reservePrediction", "usage"].map(x => v.literal(x)));
@@ -145,8 +146,23 @@ export const dispatch = internalMutation({
     const since = Date.now() - 86400000;
     const ai = await ctx.db.query("aiUsage").withIndex("by_owner_auth_id", q => q.eq("ownerAuthId", owner).gt("_creationTime", since)).take(101);
     if (a.op === "reserveAi") {
+      if (process.env.DAISY_AI_ENABLED === "false") return { error: "AI is temporarily paused by the administrator" };
       const tokens = quantity(a.amount, 200000);
+      if (tokens > aiGlobalTokenLimit()) return { error: "Shared daily AI safety budget reached. Try again tomorrow." };
       if (ai.length >= 100 || ai.reduce((sum, r) => sum + r.tokens, 0) + tokens > 200000) return { error: "Daily AI budget reached" };
+      const limiter = abuseLimiter();
+      const checks = [
+        ["aiByOwnerMinute", { key: owner }],
+        ["aiGlobalDay", {}],
+        ["aiGlobalTokens", { count: tokens }],
+      ] as const;
+      // Check all buckets before consuming any; the surrounding mutation makes
+      // checking and charging atomic even under simultaneous requests.
+      for (const [name, options] of checks) {
+        const result = await limiter.check(ctx, name, options);
+        if (!result.ok) return { error: name === "aiByOwnerMinute" ? "Too many AI requests. Wait a minute." : "Shared daily AI safety budget reached. Try again tomorrow." };
+      }
+      for (const [name, options] of checks) await limiter.limit(ctx, name, options);
       return { id: await ctx.db.insert("aiUsage", { ownerAuthId: owner, tokens }) };
     }
     if (a.op === "settleAi") {

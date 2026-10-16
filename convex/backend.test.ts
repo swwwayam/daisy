@@ -2,6 +2,7 @@
 import { convexTest } from "convex-test";
 import { expect, test } from "vitest";
 import schema from "./schema";
+import rateLimiter from "@convex-dev/rate-limiter/test";
 import { internal } from "./_generated/api";
 import type { FunctionArgs, FunctionReference } from "convex/server";
 
@@ -74,6 +75,7 @@ test("holdout finalization cannot change winners or overwrite the first report",
 
 test("rolling usage is durable, isolated and bounded", async () => {
   const t = convexTest(schema, modules);
+  rateLimiter.register(t);
   expect(await t.mutation(backend, { op: "reservePrediction", owner: "a", amount: 100000 })).toEqual({ accepted: true });
   expect(await t.mutation(backend, { op: "reservePrediction", owner: "a", amount: 1 })).toEqual({ accepted: false });
   expect(await t.mutation(backend, { op: "reservePrediction", owner: "b", amount: 1 })).toEqual({ accepted: true });

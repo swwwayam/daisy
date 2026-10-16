@@ -143,7 +143,7 @@ export default function Experience({ onStart }: { onStart: () => void }) {
         <div className="intelligence-body reveal-copy"><p>AI reasons about your data. Python carries out the plan. Every transformation and measured result stays visible in your workspace.</p><div className="agent-steps"><div><span>Sense</span><p>Compute the facts.</p></div><div><span>Reason</span><p>Choose supported actions.</p></div><div><span>Act</span><p>Execute. Measure. Explain.</p></div></div><button className="cosmic-text-link" onClick={onStart}>Start a run <ArrowUpRight size={18} /></button></div>
       </section>
 
-      <section className="cosmic-section capabilities reveal-copy" aria-label="DAISY capabilities"><div><strong>06</strong><p>Connected pipeline stages</p></div><div><strong>10</strong><p>Supported ML models</p></div><div><strong>02</strong><p>Classification & regression</p></div></section>
+      <section className="cosmic-section capabilities reveal-copy" aria-label="DAISY capabilities"><div><strong>08</strong><p>Connected pipeline stages</p></div><div><strong>27</strong><p>Supported ML models</p></div><div><strong>02</strong><p>Classification & regression</p></div></section>
 
       <section id="ask" className="cosmic-section cosmic-faq"><h2 className="reveal-copy">Good questions.<br />Clear answers.</h2><div className="cosmic-questions reveal-copy">
         <details><summary>What can I build with DAISY?<span>+</span></summary><p>Build classification models for outcomes such as customer churn, or regression models for values such as house prices. Upload a CSV and select the column to predict.</p></details>

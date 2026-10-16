@@ -345,9 +345,8 @@ def profile_for_eda(df: pd.DataFrame) -> dict:
 
     # Correlation
     correlation = (
-        numeric_df.corr(numeric_only=True)
+        numeric_df.iloc[:, :20].corr(numeric_only=True)
         .round(2)
-        .fillna(0)
         .to_dict()
     )
 
@@ -376,3 +375,25 @@ def profile_for_eda(df: pd.DataFrame) -> dict:
         "correlation": correlation,
         "outliers": outliers,
     }
+
+
+def distributions_for_eda(df):
+    """Bounded aggregate chart data; never send source rows or this report to AI."""
+    import numpy as np
+    charts = {}
+    for column in df.columns[:20]:
+        series = df[column]
+        if pd.api.types.is_numeric_dtype(series):
+            values = series.dropna().to_numpy(dtype=float)
+            values = values[np.isfinite(values)]
+            if not len(values):
+                charts[str(column)] = []
+                continue
+            # Normalize first to avoid overflow for very large finite values.
+            scale = max(float(np.abs(values).max()), 1.0)
+            counts, edges = np.histogram(values / scale, bins=min(10, max(1, int(series.nunique()))))
+            charts[str(column)] = [{"label": f"{edges[i] * scale:.4g} to {edges[i+1] * scale:.4g}", "value": int(count)} for i, count in enumerate(counts)]
+        else:
+            counts = series.dropna().astype(str).value_counts().head(10)
+            charts[str(column)] = [{"label": str(label)[:120], "value": int(count)} for label, count in counts.items()]
+    return charts

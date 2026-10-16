@@ -82,7 +82,7 @@ from final_evaluation import load_owned_package, load_server_package, evaluate_s
 from decision_report import build_report
 import inference
 from input_shift import compare_inputs
-from model_explanations import prepare_validation, explain_validation
+from model_explanations import prepare_validation, explain_validation, explain_tree_shap, validate_shap_model
 from prediction_usage import PredictionUsage
 from account_usage import snapshot as usage_snapshot
 from resource_access import ResourceOwners
@@ -489,6 +489,8 @@ ai_client = (
     OpenAI(
         base_url="https://api.groq.com/openai/v1",
         api_key=GROQ_API_KEY,
+        timeout=60.0,
+        max_retries=0,
     )
     if GROQ_API_KEY
     else None
@@ -1182,7 +1184,7 @@ def run_eda_agent(req: EDARequest, request: Request):
     df = require_owned_dataset(req.dataset_id, owner_id)
 
     # ---------- SENSE ----------
-    eda_report = agents.profile_for_eda(df)
+    eda_report = json_safe(agents.profile_for_eda(df))
 
     # ---------- REASON ----------
     summary = ""
@@ -1232,6 +1234,7 @@ EDA REPORT:
         summary = f"Rule-based EDA: {len(df)} rows, {len(df.columns)} columns, {int(df.isna().sum().sum())} missing cells. See the measured report below."
 
     eda_report["summary"] = summary
+    eda_report["distributions"] = agents.distributions_for_eda(df)
 
     save_pipeline_result(
         req.dataset_id,
@@ -1781,9 +1784,69 @@ def owned_experiment(identifier, owner):
 
 class ExplanationRequest(BaseModel):
     features: list[str] = Field(min_length=1, max_length=15)
+    method: Literal["permutation", "shap"] = "permutation"
 
 
-def execute_explanation(identifier, owner, features):
+class PlotRequest(BaseModel):
+    x: str = Field(min_length=1, max_length=512)
+    y: str | None = Field(default=None, max_length=512)
+    kind: Literal["auto", "histogram", "bar", "scatter", "line", "heatmap"] = "auto"
+    aggregation: Literal["mean", "sum", "count"] = "mean"
+
+
+@app.post("/dataset/{dataset_id}/plot")
+def dataset_plot(dataset_id: str, req: PlotRequest, request: Request):
+    from visualizations import build_plot
+    frame = require_owned_dataset(dataset_id, authenticated_user_id(request))
+    try:
+        return json_safe(build_plot(frame, req.x, req.y, req.kind, req.aggregation))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def execute_model_plot(identifier, owner, req):
+    from visualizations import build_plot
+    experiment = owned_experiment(identifier, owner)
+    artifact = experiment.get("model_artifact")
+    if not artifact:
+        raise HTTPException(status_code=409, detail="Train and save a model first.")
+    if not prediction_slot.acquire(blocking=False):
+        raise HTTPException(status_code=429, detail="Prediction service is busy. Retry shortly.")
+    try:
+        bundle, metadata = load_owned_package(owned_artifact_path(artifact["artifact_id"], owner), experiment)
+        X, actual, total = prepare_validation(bundle, metadata, interpreted_source(experiment["dataset_id"], owner), bundle["feature_columns"][:1])
+        regression = not hasattr(bundle["estimator"], "classes_")
+        allowed = {"actual", "predicted", *[f"feature:{name}" for name in X.columns]}
+        if regression:
+            allowed.add("residual")
+        if req.x not in allowed or (req.y and req.y not in allowed):
+            raise ValueError("Choose available validation outputs or encoded model features.")
+        prediction_usage.reserve(resource_store, owner, len(X))
+        predicted = bundle["estimator"].predict(X)
+        frame = pd.DataFrame(index=X.index)
+        for axis in dict.fromkeys([req.x] + ([req.y] if req.y else [])):
+            if axis.startswith("feature:"):
+                frame[axis] = X[axis[len("feature:"):]]
+            elif axis == "actual":
+                frame[axis] = actual if regression else actual.astype(str)
+            elif axis == "predicted":
+                frame[axis] = predicted if regression else np.asarray(predicted).astype(str)
+            else:
+                frame[axis] = actual.to_numpy(dtype=float) - np.asarray(predicted, dtype=float)
+        return json_safe({**build_plot(frame, req.x, req.y, req.kind, req.aggregation, total),
+                          "validation_sample": True, "model_scope": "Frozen validation sample (up to 200 rows); saved preprocessing and estimator, no refit. Final-test rows are excluded. Residual = actual − predicted."})
+    except (ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=409, detail=f"Model plot unavailable: {exc}") from exc
+    finally:
+        prediction_slot.release()
+
+
+@app.post("/experiments/{experiment_id}/plot")
+async def model_plot(experiment_id: str, req: PlotRequest, request: Request):
+    return await run_in_threadpool(execute_model_plot, experiment_id, authenticated_user_id(request), req)
+
+
+def execute_explanation(identifier, owner, features, method="permutation"):
     experiment = owned_experiment(identifier, owner)
     artifact = experiment.get("model_artifact")
     if not artifact:
@@ -1794,6 +1857,11 @@ def execute_explanation(identifier, owner, features):
         bundle, metadata = load_owned_package(owned_artifact_path(artifact["artifact_id"], owner), experiment)
         raw = interpreted_source(experiment["dataset_id"], owner)
         X, y, total = prepare_validation(bundle, metadata, raw, features)
+        if method == "shap":
+            validate_shap_model(bundle["estimator"], X)
+            X = X.iloc[:64]
+            prediction_usage.reserve(resource_store, owner, len(X))
+            return {"experiment_id": identifier, **explain_tree_shap(bundle, metadata, X, features, total)}
         # Charge every scored row, including repeats, to the shared inference budget.
         prediction_usage.reserve(resource_store, owner, len(X) * (1 + 3 * len(features)))
         return {"experiment_id": identifier, **explain_validation(bundle, metadata, X, y, features, total)}
@@ -1805,7 +1873,7 @@ def execute_explanation(identifier, owner, features):
 
 @app.post("/experiments/{experiment_id}/explain")
 async def explain_experiment(experiment_id: str, req: ExplanationRequest, request: Request):
-    return await run_in_threadpool(execute_explanation, experiment_id, authenticated_user_id(request), req.features)
+    return await run_in_threadpool(execute_explanation, experiment_id, authenticated_user_id(request), req.features, req.method)
 
 
 @app.get("/experiments")

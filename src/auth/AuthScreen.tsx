@@ -49,7 +49,8 @@ export default function AuthScreen({ onBack }: { onBack: () => void }) {
         if (authError) throw authError;
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Authentication failed. Please try again.");
+      setError(reason && typeof reason === "object" && "message" in reason && typeof reason.message === "string"
+        ? reason.message : "Authentication failed. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -58,6 +59,7 @@ export default function AuthScreen({ onBack }: { onBack: () => void }) {
   async function continueWithGoogle() {
     setBusy(true);
     setError("");
+    try {
     const { error: authError } = await authClient.signIn.social({
       provider: "google",
       callbackURL: window.location.origin,
@@ -66,6 +68,7 @@ export default function AuthScreen({ onBack }: { onBack: () => void }) {
       setError(authError.message || "Google sign-in is not configured yet.");
       setBusy(false);
     }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Google sign-in failed. Please try again."); setBusy(false); }
   }
 
   return <div className="auth-shell">
@@ -103,16 +106,16 @@ export default function AuthScreen({ onBack }: { onBack: () => void }) {
         <form className="auth-form" onSubmit={submit}>
           {mode === "signup" && <label>
             <span>Name</span>
-            <input autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} required placeholder="How should DAISY address you?" />
+            <input name="name" autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} required maxLength={80} placeholder="How should DAISY address you?" />
           </label>}
           <label>
             <span>Email</span>
-            <input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required placeholder="you@example.com" />
+            <input name="email" type="email" spellCheck={false} autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required placeholder="you@example.com" />
           </label>
           <label>
             <span>Password</span>
             <span className="password-field">
-              <input type={showPassword ? "text" : "password"} autoComplete={mode === "signup" ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} required minLength={8} placeholder="At least 8 characters" />
+              <input name="password" type={showPassword ? "text" : "password"} autoComplete={mode === "signup" ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} required minLength={8} placeholder="At least 8 characters" />
               <button type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Hide password" : "Show password"}>
                 {showPassword ? <EyeSlash size={18} /> : <Eye size={18} />}
               </button>

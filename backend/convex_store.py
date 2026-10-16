@@ -232,6 +232,6 @@ class ConvexBudget:
     def reserve(self, owner, tokens):
         from fastapi import HTTPException
         result = self.store.rpc("reserveAi", owner=owner, amount=tokens)
-        if result.get("error"): raise HTTPException(status_code=429, detail="Daily AI budget reached. Try again tomorrow or disable AI reasoning.")
+        if result.get("error"): raise HTTPException(status_code=429, detail=result["error"], headers={"Retry-After": "60"})
         return result["id"]
     def settle(self, identifier, owner, tokens): self.store.rpc("settleAi", id=identifier, owner=owner, amount=tokens)

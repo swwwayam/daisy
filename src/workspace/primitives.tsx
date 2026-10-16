@@ -25,7 +25,7 @@ export function formatValue(v: unknown): string {
 /* Loader: pulsing DAISY node + contextual message. No fake percentages. */
 export function Loader({ message }: { message: string }) {
   return (
-    <div className="ws-loader">
+    <div className="ws-loader" role="status" aria-live="polite">
       <span className="ws-node" />
       <span>{message}</span>
     </div>
@@ -34,7 +34,7 @@ export function Loader({ message }: { message: string }) {
 
 export function ErrorBox({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <div className="ws-error">
+    <div className="ws-error" role="alert">
       <div className="ws-error-head"><span className="ws-error-dot" />Stage failed</div>
       <p>{message}</p>
       {onRetry && <button className="pill pill-ghost" onClick={onRetry}>Retry</button>}

@@ -5,6 +5,9 @@ import { InputReviewPanel } from "./InputReviewPanel";
 import { PredictionPanel } from "./PredictionPanel";
 import { ExplanationPanel } from "./ExplanationPanel";
 import { UsagePanel } from "./UsagePanel";
+import { ProfileMenu } from "./ProfileMenu";
+import { VisualizationStudio } from "./VisualizationStudio";
+import { EdaCharts, CandidateChart, BarChart } from "./Charts";
 import {
   ActionList,
   Empty,
@@ -127,7 +130,7 @@ function DatasetPanel({ run, focusSelf }: { run: Run; focusSelf: () => void }) {
 
   if (st === "running" && !state.upload) return <Loader message="DAISY is reading your dataset…" />;
 
-  if (st === "error" && !state.upload) return <ErrorBox message={state.errors.dataset || "Upload failed"} onRetry={() => inputRef.current?.click()} />;
+  if (st === "error" && !state.upload) return <><ErrorBox message={state.errors.dataset || "Upload failed"} onRetry={() => inputRef.current?.click()} /><input ref={inputRef} type="file" accept=".csv,text/csv" hidden onChange={e => { handleFiles(e.target.files); e.currentTarget.value = ""; }} /></>;
 
   if (!state.upload) {
     return (
@@ -136,12 +139,11 @@ function DatasetPanel({ run, focusSelf }: { run: Run; focusSelf: () => void }) {
         onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
         onDragLeave={() => setDrag(false)}
         onDrop={(e) => { e.preventDefault(); setDrag(false); handleFiles(e.dataTransfer.files); }}
-        onClick={() => inputRef.current?.click()}
       >
         <div className="drop-mark" />
         <div className="drop-title">Drop a CSV to begin</div>
         <div className="drop-sub">DAISY will profile it, then clean, engineer, and train — end to end.</div>
-        <button className="pill pill-solid">Choose file</button>
+        <button className="pill pill-solid" onClick={() => inputRef.current?.click()}>Choose file</button>
         <input ref={inputRef} type="file" accept=".csv,text/csv" hidden onChange={(e) => handleFiles(e.target.files)} />
       </div>
     );
@@ -173,6 +175,7 @@ function DatasetPanel({ run, focusSelf }: { run: Run; focusSelf: () => void }) {
         <div className="report-block"><h5>Categorical columns</h5><div className="tag-list">{u.categorical_columns.map((c) => <span className="tag alt" key={c}>{c}</span>)}</div></div>
       )}
       <div className="report-block"><h5>Preview</h5><PreviewTable rows={u.preview} /></div>
+      {u.missing_values && <BarChart title="Missing values by column" rows={Object.entries(u.missing_values).filter(([, value]) => value > 0).sort((a, b) => b[1] - a[1]).map(([label, value]) => ({ label, value }))} note="Observed missing-cell counts before cleaning, using the recorded input policy." />}
       {u.review_available && <InputReviewPanel key={state.originalDatasetId} dataset={u} busy={Object.values(state.status).includes("running")} confirmed={st === "done"} error={state.errors.dataset} onReview={policy => { void run.reviewInput(policy); }} />}
     </div>
   );
@@ -242,7 +245,7 @@ function EdaPanel({ run }: { run: Run }) {
   if (st === "running") return <Loader message="DAISY is analyzing your data…" />;
   if (st === "error") return <ErrorBox message={state.errors.eda || "EDA failed"} onRetry={run.runEda} />;
   if (!state.eda) return null;
-  return <div className="panel-body"><DynamicReport data={state.eda as Dict} /></div>;
+  return <div className="panel-body"><EdaCharts report={state.eda as Dict} /><DynamicReport data={Object.fromEntries(Object.entries(state.eda).filter(([key]) => !["distributions", "correlation"].includes(key)))} /></div>;
 }
 
 /* ─── Feature engineering stage ─── */
@@ -293,7 +296,8 @@ function TargetPanel({ run }: { run: Run }) {
         <Empty>No columns available yet.</Empty>
       ) : (
         <>
-          <input className="ws-input" placeholder="Filter columns…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input className="ws-input" aria-label="Filter target columns" placeholder="Filter columns…" value={q} onChange={(e) => setQ(e.target.value)} />
+          {!filtered.length && <p role="status">No matching columns. Try a different filter.</p>}
           <div className="col-grid">
             {filtered.map((c) => (
               <button key={c} disabled={!!state.upload?.training_config && c !== state.upload.training_config.target_column} className={`col-chip ${state.targetColumn === c ? "sel" : ""}`} onClick={() => run.selectTarget(c)}>
@@ -412,6 +416,7 @@ function TrainingPanel({ run }: { run: Run }) {
       </div>
       {t.reasoning && <p className="lead">{t.reasoning}</p>}
       <ModelDownload training={t} />
+      <CandidateChart actions={t.actions} metric={t.output_summary?.primary_metric} />
       <p className="lead">Candidate metrics use validation data. The final test was reserved for the winner.</p>
       {t.output_summary?.final_test_metrics && <div className="report-block"><h5>Winner: final test metrics</h5><MetricGrid metrics={t.output_summary.final_test_metrics} /></div>}
       {t.output_summary?.baseline_test_metrics && <div className="report-block"><h5>Simple baseline: final test metrics</h5><MetricGrid metrics={t.output_summary.baseline_test_metrics} /></div>}
@@ -453,10 +458,12 @@ function ConfusionMatrix({ data }: { data: Dict }) {
   return (
     <div className="cm-wrap">
       <table className="cm">
+        <caption>Actual classes in rows; predicted classes in columns</caption>
+        <thead><tr><th scope="col">Actual / predicted</th>{matrix[0].map((_, index) => <th scope="col" key={index}>{formatValue(labels?.[index] ?? index)}</th>)}</tr></thead>
         <tbody>
           {matrix.map((row, i) => (
             <tr key={i}>
-              {labels && <th>{formatValue(labels[i])}</th>}
+              <th scope="row">{formatValue(labels?.[i] ?? i)}</th>
               {row.map((cell, j) => {
                 const max = Math.max(...matrix.flat());
                 const intensity = max ? (cell as number) / max : 0;
@@ -552,9 +559,9 @@ function ResultsPanel({ run }: { run: Run }) {
       <ModelDownload training={t} />
       {t?.output_summary?.experiment_id && <FinalReportDownload experimentId={t.output_summary.experiment_id} modelCard />}
       {t?.output_summary?.model_artifact && <PredictionPanel key={t.output_summary.model_artifact.artifact_id} artifactId={t.output_summary.model_artifact.artifact_id} columns={t.output_summary.model_artifact.input_columns} />}
-      {t?.output_summary?.experiment_id && !!t.output_summary.feature_columns?.length && <ExplanationPanel key={t.output_summary.experiment_id} experimentId={t.output_summary.experiment_id} columns={t.output_summary.feature_columns} />}
+      {t?.output_summary?.experiment_id && !!t.output_summary.feature_columns?.length && <ExplanationPanel key={t.output_summary.experiment_id} experimentId={t.output_summary.experiment_id} columns={t.output_summary.feature_columns} model={best ?? undefined} />}
 
-      {st !== "done" && st !== "running" && (
+      {st !== "done" && st !== "running" && st !== "error" && (
         <ReadyState title="Finalize this winner" desc="Measure this saved model on the reserved test fold and compare it with a simple baseline. This fixes the final winner for this source dataset; further model selection needs new unseen data. Retrying this winner returns its saved scores." action="Finalize and evaluate" onRun={run.runEvaluation} />
       )}
       {st === "running" && <Loader message="DAISY is evaluating the winning model…" />}
@@ -866,6 +873,8 @@ export default function Workspace({ onExit, onSignOut }: { onExit: () => void; o
   const run = useDaisyRun();
   const [focus, setFocus] = useState<StageId | null>(null);
   const [selectedRun, setSelectedRun] = useState("");
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [navigationError, setNavigationError] = useState("");
   const active = actionableStage(run.state.status);
   // follow the pipeline automatically unless the user is inspecting an earlier stage
   const displayed = focus ?? active;
@@ -881,17 +890,20 @@ export default function Workspace({ onExit, onSignOut }: { onExit: () => void; o
 
   return (
     <div className="ws">
+      <a className="skip-link" href="#pipeline-stage">Skip to pipeline</a>
       <header className="ws-nav">
         <button className="logo" onClick={onExit}><span className="logo-mark" />D.A.I.S.Y</button>
         <div className="ws-nav-mid mono">{run.state.workflowId ? `run ${run.state.workflowId.slice(0, 8)}` : "new run"}</div>
         <div className="ws-nav-actions">
-          {run.state.trainingJobId && run.state.status.training === "running" && <button className="pill pill-ghost" onClick={() => { void daisy.cancelTraining(run.state.trainingJobId as string); }}>Cancel training</button>}
+          <a className="pill pill-ghost" href="#visualization-studio">Visualizations ↗</a>
+          {run.state.trainingJobId && run.state.status.training === "running" && <button className="pill pill-ghost" disabled={cancelBusy} onClick={async () => { setCancelBusy(true); setNavigationError(""); try { await daisy.cancelTraining(run.state.trainingJobId as string); } catch (reason) { setNavigationError(reason instanceof Error ? reason.message : "Could not cancel training. Try again."); } finally { setCancelBusy(false); } }}>{cancelBusy ? "Cancelling…" : "Cancel training"}</button>}
           <button className="pill pill-ghost" disabled={Object.values(run.state.status).includes("running")} onClick={() => { run.reset(); setFocus(null); }}>New run</button>
-          <button className="pill pill-ghost" onClick={onSignOut}>Sign out</button>
+          <ProfileMenu onSignOut={onSignOut} />
         </div>
       </header>
 
       <div className="ws-intro">
+        {navigationError && <p role="alert">{navigationError}</p>}
         <p>Your machine-learning workspace</p>
         <h1>{run.state.upload ? "Follow your data to discovery." : "Start with a little curiosity."}</h1>
         <div className="saved-history" aria-busy={run.historyLoading}>
@@ -929,8 +941,10 @@ export default function Workspace({ onExit, onSignOut }: { onExit: () => void; o
 
       <PipelineRail status={run.state.status} active={displayed} onPick={goto} />
 
+      <VisualizationStudio datasetId={run.state.currentDatasetId} originalId={run.state.originalDatasetId} training={run.state.training} />
+
       <div className="ws-body">
-        <main className="ws-stage">
+        <main className="ws-stage" id="pipeline-stage" tabIndex={-1}>
           <div className="stage-head">
             <span className="stage-index mono">{String(STAGES.findIndex((s) => s.id === displayed) + 1).padStart(2, "0")}</span>
             <h2>{stageMeta.label}</h2>
@@ -1009,7 +1023,7 @@ function ExperimentHistory({ latest }: { latest?: string }) {
         </div>)}
         <ModelDownload training={record.agent_record} />
         {record.agent_record.output_summary?.model_artifact && <PredictionPanel key={record.agent_record.output_summary.model_artifact.artifact_id} artifactId={record.agent_record.output_summary.model_artifact.artifact_id} columns={record.agent_record.output_summary.model_artifact.input_columns} />}
-        {Array.isArray(record.training_result.feature_columns) && !!record.training_result.feature_columns.length && <ExplanationPanel key={record.experiment_id} experimentId={record.experiment_id} columns={record.training_result.feature_columns as string[]} />}
+        {Array.isArray(record.training_result.feature_columns) && !!record.training_result.feature_columns.length && <ExplanationPanel key={record.experiment_id} experimentId={record.experiment_id} columns={record.training_result.feature_columns as string[]} model={record.agent_record.output_summary?.best_model ?? undefined} />}
         <FinalReportDownload experimentId={record.experiment_id} modelCard />
         {record.final_evaluation ? <>
           <h4>Saved final test scores</h4><MetricGrid metrics={record.final_evaluation.test_metrics as Dict} />

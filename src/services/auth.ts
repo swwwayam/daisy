@@ -4,12 +4,11 @@ import type { AuthClient } from "@convex-dev/better-auth/react";
 
 const baseURL = (import.meta.env.VITE_CONVEX_SITE_URL as string | undefined)?.trim();
 
-if (!baseURL) {
-  throw new Error("Convex Auth is not configured. Add VITE_CONVEX_SITE_URL to .env.local.");
-}
+const validBaseURL = (() => { try { return !!baseURL && ["https:", "http:"].includes(new URL(baseURL).protocol); } catch { return false; } })();
+export const authConfigurationError = !validBaseURL ? "Authentication is not configured. Set a valid VITE_CONVEX_SITE_URL and restart the frontend." : null;
 
 export const authClient = createAuthClient({
-  baseURL,
+  baseURL: validBaseURL ? baseURL : "https://configuration-missing.invalid",
   plugins: [convexClient(), crossDomainClient()],
 });
 

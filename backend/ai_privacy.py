@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from persistence import SQLiteStore, SupabaseStore
 
 SENSITIVE_NAME = re.compile(r"email|phone|mobile|address|(?:^|_)name|ssn|aadhaar|passport|birth|patient|account|latitude|longitude", re.I)
-VALUE_KEYS = {"top_values", "sample", "samples", "sample_values", "examples", "preview", "target_min", "target_max", "target_mean", "target_std"}
+VALUE_KEYS = {"top_values", "sample", "samples", "sample_values", "examples", "preview", "distributions", "target_min", "target_max", "target_mean", "target_std"}
 SAFE_FIELDS = {"name", "dtype", "is_numeric", "missing_count", "missing_ratio", "null_count", "zero_count", "unique_count", "unique_ratio"}
 
 

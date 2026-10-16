@@ -16,7 +16,7 @@ The user's exported files are retained unchanged under design-reference/. They a
 - Narrow screens use an inline hero sculpture and naturally stacked chapters. There is no long pinned sequence on phones. Navigation includes an Escape-key exit.
 - The motion control and prefers-reduced-motion both disable scroll pinning and animated entrances, display all chapters, and render a static sculpture. Hidden/offscreen scenes skip GPU drawing. Resources, observers, event handlers, and ScrollTriggers are cleaned up on exit.
 - WebGL failure has a decorative HTML fallback; the page and workspace remain usable.
-- The workspace inherits black and violet brand tokens. The earlier Landing.tsx and image remain unused by the active entry point.
+- The workspace inherits black and violet brand tokens. The active landing page uses the procedural Three.js scene; the obsolete standalone HTML prototypes and generated images have been removed from src/.
 
 ## Validation and limits
 

@@ -56,6 +56,17 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 /* ─── Loose response types — render defensively, only show fields that exist ─── */
 export type Dict = Record<string, unknown>;
 
+export interface PlotRequest {
+  x: string; y?: string; kind: "auto" | "histogram" | "bar" | "scatter" | "line" | "heatmap"; aggregation: "mean" | "sum" | "count";
+}
+export interface PlotResult {
+  kind: string; x_label: string; y_label: string;
+  points: { x: number | string; y: number }[];
+  cells?: { x: string; y: string; value: number }[] | null; model_scope?: string;
+  source_rows: number; valid_rows: number; rows_used: number; excluded_rows: number;
+  sampled: boolean; validation_sample?: boolean; scope: string;
+}
+
 export interface SavedRun {
   id: string;
   updated_at: string;
@@ -191,9 +202,18 @@ export interface PredictionResult {
 }
 
 export interface ExplanationResult {
+  method: "validation_permutation";
   experiment_id: string; artifact_id: string; metric: string; baseline_metric_value: number;
   change_label: string; rows_evaluated: number; validation_rows: number; repeats: number;
   features: { feature: string; score_decrease: number; repeat_std: number }[];
+  scope: string; limitations: string[];
+}
+
+export interface ShapResult {
+  method: "tree_shap"; experiment_id: string; artifact_id: string;
+  rows_evaluated: number; validation_rows: number; output_label: string;
+  features: { feature: string; mean_abs_shap: number; mean_signed_shap: number }[];
+  local: { validation_sample_position: number; base_value: number; model_output: number; other_features_contribution: number; features: { feature: string; contribution: number }[] };
   scope: string; limitations: string[];
 }
 
@@ -207,6 +227,9 @@ export interface AccountUsage {
 
 /* ─── Endpoints ─── */
 export const daisy = {
+  async plot(source: "dataset" | "model", id: string, request: PlotRequest): Promise<PlotResult> {
+    return postJson(source === "dataset" ? `/dataset/${encodeURIComponent(id)}/plot` : `/experiments/${encodeURIComponent(id)}/plot`, request);
+  },
   async usage(): Promise<AccountUsage> {
     return json(await fetch(`${BASE_URL}/account/usage`, { headers: await authHeaders() }));
   },
@@ -215,8 +238,8 @@ export const daisy = {
     if (!response.ok) throw new DaisyApiError(await readError(response), response.status);
     return response.blob();
   },
-  async explain(experimentId: string, features: string[]): Promise<ExplanationResult> {
-    return postJson(`/experiments/${encodeURIComponent(experimentId)}/explain`, { features });
+  async explain(experimentId: string, features: string[], method: "permutation" | "shap" = "permutation"): Promise<ExplanationResult | ShapResult> {
+    return postJson(`/experiments/${encodeURIComponent(experimentId)}/explain`, { features, method });
   },
   async predict(artifactId: string, file: File): Promise<PredictionResult> {
     const form = new FormData();
