@@ -58,6 +58,7 @@ function Plot({ report }: { report: PlotResult }) {
       </g>
     </svg></div>
     <p>{report.rows_used.toLocaleString()} rows used · {report.source_rows.toLocaleString()} source rows · {report.excluded_rows.toLocaleString()} missing/non-finite pairs excluded{report.sampled ? " · deterministic sample" : ""}{report.validation_sample ? " · validation sample only" : ""}.</p><p>{report.scope} {report.model_scope}</p>
+    {!!report.omitted_rows && <p>{report.displayed_rows?.toLocaleString()} valid rows represented in the displayed groups; {report.omitted_rows.toLocaleString()} valid rows omitted by the category or aggregation limits.</p>}
     <details><summary>View plotted values</summary><div className="studio-values"><table><thead><tr><th>{report.x_label}</th><th>{report.y_label}</th>{heatmap && <th>Count</th>}</tr></thead><tbody>{heatmap ? report.cells?.map((p, i) => <tr key={i}><td>{p.x}</td><td>{p.y}</td><td>{p.value}</td></tr>) : report.points.map((p, i) => <tr key={i}><td>{String(p.x)}</td><td>{display(p.y)}</td></tr>)}</tbody></table></div></details>
   </figure>;
 }

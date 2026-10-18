@@ -64,6 +64,7 @@ export interface PlotResult {
   points: { x: number | string; y: number }[];
   cells?: { x: string; y: string; value: number }[] | null; model_scope?: string;
   source_rows: number; valid_rows: number; rows_used: number; excluded_rows: number;
+  displayed_rows?: number; omitted_rows?: number;
   sampled: boolean; validation_sample?: boolean; scope: string;
 }
 

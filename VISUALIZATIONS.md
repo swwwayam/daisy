@@ -36,6 +36,9 @@ are validation diagnostics; final-test confusion results remain in Results.
 - Heatmaps use counts for the top 15 categories per axis, bounded before cross-tabulation.
 - Dataset scatter/line plots use at most 1,000 deterministic sampled pairs.
 - Missing and non-finite selected values are excluded; zero is preserved.
+- Count bars use X only, so missing Y values do not reduce their counts.
+- Category labels remain unique when long names are truncated or values stringify alike.
+- Bar and heatmap reports state how many valid rows fall outside displayed groups.
 - Every chart states rows used, source rows, exclusions, sampling and plot scope.
 - Both endpoints require authentication and enforce dataset/experiment ownership.
 - Plotting calls no AI provider. Selected plot data goes only to the authenticated

@@ -3,6 +3,21 @@ import numpy as np
 import pandas as pd
 
 
+def category_labels(values):
+    """Keep bounded labels unique even when truncation/type conversion collides."""
+    labels, used = {}, set()
+    for value in values:
+        base = str(value)[:160]
+        label, suffix = base, 2
+        while label in used:
+            ending = f" ({suffix})"
+            label = base[:160 - len(ending)] + ending
+            suffix += 1
+        labels[value] = label
+        used.add(label)
+    return labels
+
+
 def build_plot(frame, x, y=None, kind="auto", aggregation="mean", total_rows=None):
     if x not in frame or (y and y not in frame):
         raise ValueError("Choose columns available in this data source.")
@@ -17,7 +32,8 @@ def build_plot(frame, x, y=None, kind="auto", aggregation="mean", total_rows=Non
         raise ValueError("Histograms require a numeric X column. Use a bar chart for categories.")
     if kind == "bar" and y and aggregation != "count" and not numeric(y):
         raise ValueError("Mean and sum require a numeric Y column; choose Count for categories.")
-    columns = list(dict.fromkeys([x] + ([y] if y and kind != "histogram" else [])))
+    needs_y = bool(y and kind != "histogram" and not (kind == "bar" and aggregation == "count"))
+    columns = list(dict.fromkeys([x] + ([y] if needs_y else [])))
     data = frame[columns].replace([np.inf, -np.inf], np.nan).dropna()
     valid_rows = len(data)
     if not valid_rows:
@@ -26,12 +42,15 @@ def build_plot(frame, x, y=None, kind="auto", aggregation="mean", total_rows=Non
     if sampled:
         data = data.sample(1000, random_state=42)
     cells = None
+    displayed_rows = len(data)
     if kind == "heatmap":
         x_values = data[x].value_counts().head(15).index.tolist()
         y_values = data[y].value_counts().head(15).index.tolist()
         bounded = data[data[x].isin(x_values) & data[y].isin(y_values)]
         counts = pd.crosstab(bounded[x], bounded[y])
-        cells = [{"x": str(a)[:160], "y": str(b)[:160], "value": int(counts.loc[a, b]) if a in counts.index and b in counts.columns else 0} for a in x_values for b in y_values]
+        x_labels, y_labels = category_labels(x_values), category_labels(y_values)
+        cells = [{"x": x_labels[a], "y": y_labels[b], "value": int(counts.loc[a, b]) if a in counts.index and b in counts.columns else 0} for a in x_values for b in y_values]
+        displayed_rows = len(bounded)
         points, y_label = [], y
     elif kind == "histogram":
         # Normalize first so extreme finite values cannot overflow numpy bins.
@@ -45,7 +64,11 @@ def build_plot(frame, x, y=None, kind="auto", aggregation="mean", total_rows=Non
         groups = data.groupby(x, observed=True, sort=False)
         result = groups.size() if not y or aggregation == "count" else groups[y].agg(aggregation)
         result = result.replace([np.inf, -np.inf], np.nan).dropna().sort_values(ascending=False).head(20)
-        points = [{"x": str(key)[:160], "y": float(value)} for key, value in result.items()]
+        if result.empty:
+            raise ValueError("The selected aggregation has no finite values. Try Mean or Count.")
+        labels = category_labels(result.index)
+        points = [{"x": labels[key], "y": float(value)} for key, value in result.items()]
+        displayed_rows = int(groups.size().reindex(result.index).sum())
         y_label = "Row count" if not y or aggregation == "count" else f"{aggregation.title()} of {y}"
     else:
         if kind == "line":
@@ -54,5 +77,6 @@ def build_plot(frame, x, y=None, kind="auto", aggregation="mean", total_rows=Non
         y_label = y
     return {"kind": kind, "x_label": x, "y_label": y_label, "points": points, "cells": cells,
             "source_rows": len(frame) if total_rows is None else total_rows, "valid_rows": valid_rows,
+            "displayed_rows": displayed_rows, "omitted_rows": valid_rows - displayed_rows if kind in {"bar", "heatmap"} else 0,
             "rows_used": len(data), "sampled": sampled, "excluded_rows": len(frame) - valid_rows,
             "scope": "Counts for the 15 most frequent categories on each axis; remaining categories omitted." if kind == "heatmap" else "Top 20 groups by plotted value." if kind == "bar" else "20 numeric bins." if kind == "histogram" else "Numeric pairs; line charts are sorted by X and do not establish time order or causality."}

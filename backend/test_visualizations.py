@@ -9,6 +9,46 @@ from visualizations import build_plot
 import main
 
 
+def test_count_bars_do_not_drop_missing_or_infinite_y():
+    frame = pd.DataFrame({"group": ["a", "a", "b", None], "value": [None, np.inf, 0., 9.]})
+    counted = build_plot(frame, "group", "value", "bar", "count")
+    assert {p["x"]: p["y"] for p in counted["points"]} == {"a": 2., "b": 1.}
+    assert counted["excluded_rows"] == 1 and counted["displayed_rows"] == 3
+    mean = build_plot(frame, "group", "value", "bar", "mean")
+    assert mean["points"] == [{"x": "b", "y": 0.}]
+
+
+def test_long_category_names_stay_distinct_in_bars_and_heatmaps():
+    prefix = "long-name" * 30
+    frame = pd.DataFrame({"a": [prefix + "A", prefix + "B"], "b": ["ok", "ok"]})
+    bars = build_plot(frame, "a", kind="bar")
+    labels = [p["x"] for p in bars["points"]]
+    assert len(set(labels)) == 2 and all(len(label) <= 160 for label in labels)
+    heatmap = build_plot(frame, "a", "b")
+    assert len({cell["x"] for cell in heatmap["cells"]}) == 2
+    assert sum(cell["value"] for cell in heatmap["cells"]) == 2
+
+
+def test_stringified_category_collisions_are_disambiguated():
+    from visualizations import category_labels
+    labels = category_labels([1, "1", "1 (2)"])
+    assert len(set(labels.values())) == 3
+
+
+@pytest.mark.parametrize("kind", ["bar", "heatmap"])
+def test_top_category_reports_account_for_omitted_rows(kind):
+    frame = pd.DataFrame({"x": [f"category{i}" for i in range(30)], "y": ["one"] * 30})
+    report = build_plot(frame, "x", "y" if kind == "heatmap" else None, kind)
+    assert report["displayed_rows"] == (20 if kind == "bar" else 15)
+    assert report["displayed_rows"] + report["omitted_rows"] == report["valid_rows"] == 30
+
+
+def test_overflowed_sum_fails_instead_of_drawing_an_empty_chart():
+    frame = pd.DataFrame({"group": ["a", "a"], "value": [1.7e308, 1.7e308]})
+    with pytest.raises(ValueError, match="no finite values"):
+        build_plot(frame, "group", "value", "bar", "sum")
+
+
 def test_auto_and_full_dataset_aggregations_preserve_zeros():
     frame = pd.DataFrame({"x": [0., 0., 10., np.nan, np.inf], "city": ["a", "a", "b", "a", "a"], "y": [2., 4., 6., 8., 10.]})
     histogram = build_plot(frame, "x")
