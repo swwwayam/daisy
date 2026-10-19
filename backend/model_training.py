@@ -33,13 +33,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from input_shift import training_reference
-from sklearn.ensemble import (
-    GradientBoostingClassifier,
-    GradientBoostingRegressor,
-    RandomForestClassifier,
-    RandomForestRegressor,
-)
-from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
@@ -55,21 +48,15 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import train_test_split
 from sklearn.dummy import DummyClassifier, DummyRegressor
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.svm import SVC, SVR
 
 from model_selection import detect_problem_type
 
-# Same fixed vocabulary as model_selection.py, mapped to real estimators.
-# Kept here rather than imported to avoid this module depending on
-# sklearn-object construction happening inside model_selection.py, which
-# only ever deals with model NAMES, never instances.
+# Shared model vocabulary and estimator factories live in the catalog.
 from model_catalog import MODEL_FACTORY
 
 
 # Which metric decides the winner, and whether higher or lower is better.
 PRIMARY_METRIC = {"classification": "f1_weighted", "regression": "rmse"}
-HIGHER_IS_BETTER = {"classification": True, "regression": False}
 
 
 class TrainingDataError(ValueError):
@@ -130,104 +117,6 @@ def _fit_recorded_preprocessing(
             message = report[0].get("message", "unknown preprocessing failure") if report else "no result"
             raise TrainingDataError(f"Could not fit preprocessing step '{kind}' on training data: {message}")
     return current, fitted, ignored_target_steps
-
-
-def prepare_split_data(
-    df: pd.DataFrame,
-    target_column: str,
-    problem_type: str,
-    test_size: float,
-    random_state: int,
-    raw_df: pd.DataFrame | None = None,
-    preprocessing_steps: list[dict] | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, dict, list[dict], dict]:
-    """Create a deterministic split and fit preprocessing on its train fold only."""
-    if raw_df is None:
-        X, y, warnings = prepare_training_data(df, target_column)
-        stratify = y if problem_type == "classification" and y.value_counts().min() >= 2 else None
-        try:
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=test_size, random_state=random_state, stratify=stratify
-            )
-        except ValueError as exc:
-            raise TrainingDataError(f"Could not create train/test split: {exc}") from exc
-        schema = {
-            "feature_columns": X.columns.tolist(),
-            "input_columns": X.columns.tolist(),
-            "dataset_fingerprint": _dataset_fingerprint(df),
-            "train_index_hash": _hash_index(X_train.index),
-            "test_index_hash": _hash_index(X_test.index),
-            "leakage_free_preprocessing": False,
-        }
-        return X_train, X_test, y_train, y_test, warnings, list(preprocessing_steps or []), schema
-
-    if target_column not in raw_df.columns:
-        raise TrainingDataError(f"Target column '{target_column}' not found in original dataset")
-    source = raw_df.copy()
-    if any(step.get("type") == "normalize" for step in preprocessing_steps or []):
-        source = source.replace(r"^\s*$", np.nan, regex=True)
-        missing_tokens = ["NA", "N/A", "na", "n/a", "NULL", "null", "None", "none", "?", "-"]
-        for column in source.select_dtypes(include=["object", "string"]).columns:
-            source[column] = source[column].replace(missing_tokens, np.nan)
-    missing_target_count = int(source[target_column].isna().sum())
-    source = source.dropna(subset=[target_column])
-    remove_duplicates = any(step.get("type") == "drop_duplicates" for step in preprocessing_steps or [])
-    duplicate_count = int(source.duplicated().sum()) if remove_duplicates else 0
-    if remove_duplicates:
-        # Exact duplicates must not be allowed to land on opposite sides of the
-        # split. Removing them uses no learned statistics and is deterministic.
-        source = source.drop_duplicates()
-    if len(source) < 10:
-        raise TrainingDataError("Not enough rows with a target value to create a meaningful train/test split")
-
-    y_for_split = source[target_column]
-    stratify = y_for_split if problem_type == "classification" and y_for_split.value_counts().min() >= 2 else None
-    try:
-        train_index, test_index = train_test_split(
-            source.index, test_size=test_size, random_state=random_state, stratify=stratify
-        )
-    except ValueError as exc:
-        raise TrainingDataError(f"Could not create train/test split: {exc}") from exc
-
-    transformed_train, fitted_steps, ignored = _fit_recorded_preprocessing(
-        source.loc[train_index], list(preprocessing_steps or []), target_column
-    )
-    X_train, y_train, train_warnings = prepare_training_data(transformed_train, target_column)
-
-    from daisy_predict import transform
-    from model_export import required_columns
-
-    feature_columns = X_train.columns.tolist()
-    input_columns = required_columns(feature_columns, fitted_steps)
-    bundle = {
-        "input_columns": input_columns,
-        "feature_columns": feature_columns,
-        "target_column": target_column,
-        "preprocessing": fitted_steps,
-    }
-    try:
-        X_test = transform(bundle, source.loc[test_index])
-    except (ValueError, TypeError) as exc:
-        raise TrainingDataError(f"Could not transform the held-out test data: {exc}") from exc
-    y_test = source.loc[test_index, target_column]
-
-    warnings = {
-        "rows_dropped_for_missing_values": train_warnings["rows_dropped_for_missing_values"],
-        "rows_missing_target_excluded_before_split": missing_target_count,
-        "duplicate_rows_excluded_before_split": duplicate_count,
-        "rows_used": len(X_train) + len(X_test),
-        "target_preprocessing_ignored": sorted(set(ignored)),
-    }
-    schema = {
-        "feature_columns": feature_columns,
-        "input_columns": input_columns,
-        "feature_dtypes": {column: str(X_train[column].dtype) for column in feature_columns},
-        "dataset_fingerprint": _dataset_fingerprint(raw_df),
-        "train_index_hash": _hash_index(X_train.index),
-        "test_index_hash": _hash_index(X_test.index),
-        "leakage_free_preprocessing": True,
-    }
-    return X_train, X_test, y_train, y_test, warnings, fitted_steps, schema
 
 
 def prepare_training_data(

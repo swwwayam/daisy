@@ -264,17 +264,10 @@ DAISY/
 │   ├── requirements.txt
 │   └── test_*.py
 │
-├── docs/
-│   ├── Architecture.md
-│   ├── Bug.md
-│   ├── Constraints.md
-│   ├── Decisions.md
-│   ├── Feature.md
-│   ├── Flow.md
-│   ├── Handover.md
+├── verification/
 │   ├── README.md
-│   ├── Rollback.md
-│   └── Test-Checklist.md
+│   ├── adult-census.md
+│   └── titanic.md
 │
 ├── public/
 │
@@ -522,24 +515,30 @@ npm run typecheck
 
 Potential future improvements include:
 
--   Persistent database-backed pipeline sessions
 -   More supported datasets and file formats
--   Larger model library
 -   Advanced preprocessing and feature selection
 -   Automated hyperparameter optimization
--   Model explainability
--   Pipeline comparison and experiment tracking
--   Persistent user/project history
--   Production deployment 
+-   Reproducible benchmark runner comparing baseline, rules, and AI
+-   Production process supervision, alerting, and capacity/load verification
+-   Full dataset/model deletion and binary retention automation
+-   Explicitly authorized workspace sharing and billing integration
+-   Live deployment and two-account authorization verification
 -   More sophisticated agent orchestration and recovery
 
 ------------------------------------------------------------------------
 
 ## 📚 Documentation
 
-Additional project documentation is available in the [`docs/`](docs/)
-directory, including architecture, workflow, design decisions,
-constraints, testing, and rollback information.
+Operational and feature documentation:
+
+- [Deployment and worker health](DEPLOYMENT.md) and [frontend hosting](deployment/vercel.md)
+- [Security and abuse controls](SECURITY.md)
+- [Experiments and final evaluation](EXPERIMENTS.md)
+- [Model exports](MODEL_DOWNLOADS.md) and [predictions](PREDICTIONS.md)
+- [Explanations](EXPLANATIONS.md) and [visualizations](VISUALIZATIONS.md)
+- [Account usage](ACCOUNT_USAGE.md)
+- [Runtime setup](backend/SAAS_SETUP.md) and [resource isolation](backend/RESOURCE_ISOLATION.md)
+- [Saved-model verification](verification/README.md)
 
 ------------------------------------------------------------------------
 

@@ -1,4 +1,4 @@
-/* Interpreted from the supplied Refero exports in /design-reference.
+/* Interpreted from the original supplied Refero design exports.
    Fixed invalid #15846 and range-valued CSS lengths. Inter is the supplied
    substitute for PPNeueMontreal; font assets are self-hosted through Vite. */
 :root {
