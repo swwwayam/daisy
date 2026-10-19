@@ -1,5 +1,9 @@
 # D.A.I.S.Y.
 
+Saved-model metric checks for Titanic and Adult Census Income, including
+reproduction steps and limitations, are recorded in
+[evaluation verification](verification/README.md).
+
 ## Convex runtime
 
 Signup and AI abuse controls are documented in [SECURITY.md](SECURITY.md).
