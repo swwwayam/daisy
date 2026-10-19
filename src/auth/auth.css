@@ -174,3 +174,15 @@
 @media (prefers-reduced-transparency: reduce) {
   .auth-panel { background: #111015; backdrop-filter: none; }
 }
+
+.access-shell { min-height: 100dvh; display: grid; place-items: center; padding: 32px 18px; background: #08070c; }
+.access-shell .auth-panel { width: min(100%, 560px); }
+.access-description { color: #bdb7ca; line-height: 1.7; margin-block: 18px; overflow-wrap: anywhere; }
+.access-admin-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 24px; background: #161023; color: #ddd3f7; }
+.access-management { max-width: 900px; margin: auto; padding: 32px 20px; }
+.access-management > p { margin-block: 16px; line-height: 1.6; }
+.access-request-list { padding: 0; list-style: none; }
+.access-request-list > li { padding: 24px; margin-block: 20px; background: #17121f; border: 1px solid #393044; border-radius: 16px; overflow-wrap: anywhere; }
+.access-request-list p { margin-block: 10px; white-space: pre-wrap; }
+.access-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
+.access-shell button:focus-visible, .access-admin-bar button:focus-visible, .access-management button:focus-visible { outline: 2px solid #b9a2ff; outline-offset: 4px; }

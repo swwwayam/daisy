@@ -43,7 +43,7 @@ export default function AuthScreen({ onBack }: { onBack: () => void }) {
           callbackURL: window.location.origin,
         });
         if (authError) throw authError;
-        setNotice("Your workspace is ready. Signing you in…");
+        setNotice("Account created. Sign in to request workspace access.");
       } else {
         const { error: authError } = await authClient.signIn.email({ email, password });
         if (authError) throw authError;
@@ -90,12 +90,12 @@ export default function AuthScreen({ onBack }: { onBack: () => void }) {
       <section className="auth-panel" aria-labelledby="auth-title">
         <div className="auth-switch" role="tablist" aria-label="Authentication mode">
           <button role="tab" aria-selected={mode === "signin"} onClick={() => changeMode("signin")}>Sign in</button>
-          <button role="tab" aria-selected={mode === "signup"} onClick={() => changeMode("signup")}>Create account</button>
+          <button role="tab" aria-selected={mode === "signup"} onClick={() => changeMode("signup")}>Request access</button>
         </div>
 
         <div className="auth-heading">
-          <p>{mode === "signin" ? "Welcome back" : "Begin a new workspace"}</p>
-          <h2 id="auth-title">{mode === "signin" ? "Pick up where you left off." : "Build with your own data."}</h2>
+          <p>{mode === "signin" ? "Welcome back" : "DAISY private preview"}</p>
+          <h2 id="auth-title">{mode === "signin" ? "Pick up where you left off." : "Create an account to request access."}</h2>
         </div>
 
         <button className="auth-google" type="button" onClick={continueWithGoogle} disabled={busy}>
@@ -126,11 +126,11 @@ export default function AuthScreen({ onBack }: { onBack: () => void }) {
           {notice && <p className="auth-message success" role="status">{notice}</p>}
 
           <button className="auth-submit" disabled={busy}>
-            <span>{busy ? "Connecting" : mode === "signin" ? "Enter workspace" : "Create workspace"}</span>
+            <span>{busy ? "Connecting" : mode === "signin" ? "Continue" : "Continue to access request"}</span>
             <ArrowRight size={18} />
           </button>
         </form>
-        <p className="auth-terms">By continuing, you agree to keep access to uploaded data within your authorised workspace.</p>
+        <p className="auth-terms">DAISY is invite only. Creating an account does not grant workspace access; the owner must approve your request.</p>
       </section>
     </main>
   </div>;

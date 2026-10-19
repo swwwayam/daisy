@@ -28,6 +28,17 @@ const runStatus = v.union(
 );
 
 export default defineSchema({
+  accessRequests: defineTable({
+    authId: v.string(),
+    email: v.string(),
+    name: v.string(),
+    reason: v.string(),
+    emailVerified: v.optional(v.boolean()),
+    status: v.union(v.literal("pending"), v.literal("approved"), v.literal("denied"), v.literal("revoked")),
+    updatedAt: v.number(),
+    reviewedBy: v.optional(v.string()),
+  }).index("by_auth_id", ["authId"]).index("by_status", ["status"]),
+
   profiles: defineTable({
     authId: v.string(),
     email: v.optional(v.string()),

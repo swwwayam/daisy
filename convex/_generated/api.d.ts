@@ -9,6 +9,8 @@
  */
 
 import type * as abuseProtection from "../abuseProtection.js";
+import type * as access from "../access.js";
+import type * as accessPolicy from "../accessPolicy.js";
 import type * as accounts from "../accounts.js";
 import type * as auth from "../auth.js";
 import type * as backend from "../backend.js";
@@ -23,6 +25,8 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   abuseProtection: typeof abuseProtection;
+  access: typeof access;
+  accessPolicy: typeof accessPolicy;
   accounts: typeof accounts;
   auth: typeof auth;
   backend: typeof backend;

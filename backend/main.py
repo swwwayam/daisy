@@ -92,6 +92,7 @@ from job_queue import build_queue, QueueError
 from ai_privacy import build_budget, private_profile, restore_names, redact_text
 from agent_schema import Timer, build_agent_record, new_workflow_id
 from retention import parse_retention_days, retention_cutoff
+from invite_access import require_invited_user
 
 load_dotenv()
 RUN_RETENTION_DAYS = parse_retention_days(os.getenv("DAISY_RUN_RETENTION_DAYS"))
@@ -179,6 +180,7 @@ async def validate_access_token(token: str) -> dict:
         subject = claims.get("sub")
         if not subject:
             raise HTTPException(status_code=401, detail="Convex returned an invalid user session.")
+        await require_invited_user(CONVEX_SITE_URL, token)
         return {"id": subject, "email": claims.get("email"), "name": claims.get("name")}
 
     if AUTH_PROVIDER != "supabase":

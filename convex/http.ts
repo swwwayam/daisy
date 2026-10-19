@@ -1,10 +1,22 @@
 import { httpRouter } from "convex/server";
 import { authComponent, createAuth } from "./auth";
 import { httpAction } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 
 const http = httpRouter();
 authComponent.registerRoutes(http, createAuth, { cors: true });
+
+// The Python API forwards the verified user's bearer token here on every
+// protected request. Revocation takes effect even for an existing session.
+http.route({
+  path: "/api/daisy/access", method: "GET",
+  handler: httpAction(async ctx => {
+    const access = await ctx.runQuery(api.access.current, {});
+    return Response.json({ approved: access?.status === "approved" }, {
+      status: access ? 200 : 401, headers: { "Cache-Control": "no-store" },
+    });
+  }),
+});
 
 http.route({
   path: "/api/daisy/backend",

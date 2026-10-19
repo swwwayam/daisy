@@ -1,9 +1,8 @@
 import { mutation, query, type MutationCtx } from "./_generated/server";
+import { requireApprovedAccess } from "./accessPolicy";
 
 async function requireIdentity(ctx: MutationCtx) {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity) throw new Error("Authentication required");
-  return identity;
+  return requireApprovedAccess(ctx);
 }
 
 export const ensurePersonalWorkspace = mutation({
@@ -64,6 +63,7 @@ export const currentWorkspace = query({
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return null;
+    await requireApprovedAccess(ctx);
     return await ctx.db
       .query("workspaces")
       .withIndex("by_owner_auth_id", (q) => q.eq("ownerAuthId", identity.tokenIdentifier))

@@ -1,5 +1,16 @@
 # Signup and AI abuse protection
 
+## Workspace approval
+
+DAISY's workspace is invite only. Authentication allows an account to request
+access; only an approved user ID can create a workspace or use the Convex-backed
+Python API. The frontend gate is backed by live approval checks on the API.
+Owner bootstrap requires a configured verified email or explicitly configured
+trusted user ID. No owner email or role supplied by a browser is trusted.
+See [deployment setup](deployment/vercel.md) for owner configuration, approval,
+revocation scope and release order. Existing non-owner accounts require approval
+after this change. This does not automatically cancel jobs already running.
+
 New user creation (email/password and first Google login) reserves a registration
 slot in Convex before creating the user. Existing users signing in do not consume
 a slot. The default is **3 registration reservations per network per UTC day**.
