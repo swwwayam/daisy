@@ -178,7 +178,39 @@
 .access-shell { min-height: 100dvh; display: grid; place-items: center; padding: 32px 18px; background: #08070c; }
 .access-shell .auth-panel { width: min(100%, 560px); }
 .access-description { color: #bdb7ca; line-height: 1.7; margin-block: 18px; overflow-wrap: anywhere; }
-.access-admin-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 24px; background: #161023; color: #ddd3f7; }
+.access-admin-bar {
+  position: relative;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 78px;
+  padding: 18px clamp(20px, 4vw, 40px);
+  background: #08070b;
+  color: #aaa5b3;
+  border-bottom: 1px solid rgb(255 255 255 / 12%);
+}
+.access-admin-bar > span {
+  color: #8f8c98;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+.access-admin-bar .pill {
+  min-height: 42px;
+  padding: 10px 20px;
+  border-radius: 24px;
+  background: transparent;
+  border-color: #45424d;
+  color: #fff;
+  font-size: 13px;
+}
+.access-admin-bar .pill:hover:not(:disabled) {
+  border-color: #b49aff;
+  color: #b49aff;
+}
 .access-management { max-width: 900px; margin: auto; padding: 32px 20px; }
 .access-management > p { margin-block: 16px; line-height: 1.6; }
 .access-request-list { padding: 0; list-style: none; }
