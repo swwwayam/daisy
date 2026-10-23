@@ -99,9 +99,14 @@ def _fit_recorded_preprocessing(
 
         action = {
             key: saved[key]
-            for key in ("type", "column", "strategy", "column_b", "value")
+            for key in ("type", "column", "strategy", "column_b", "value", "date_fill_values")
             if key in saved
         }
+        if kind == "extract_datetime_features":
+            # Date-component replacements are learned from the training fold,
+            # just like every other fitted preprocessing value.  Do not reuse
+            # a value captured while the full dataset was being engineered.
+            action.pop("date_fill_values", None)
         if kind == "impute" and action.get("strategy") not in {"mean", "median", "mode"}:
             action["value"] = saved.get("fill")
 

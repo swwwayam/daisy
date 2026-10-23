@@ -86,8 +86,8 @@ whole queue is capped at 100 active jobs. Idempotency keys are scoped to the own
 reusing a key with different parameters returns 409. Polling exposes lifecycle
 states, not fabricated percentage estimates.
 
-Training accepts at most 3 models, 100k rows, 1k columns, 20m cells, and 256 MB of
-DataFrame memory. SVM jobs are limited to 10k rows. These are application workload
+Training accepts at most 3 models, with no fixed row-count ceiling, 1k columns, 20m cells, and 256 MB of
+DataFrame memory. These are application workload
 limits, not an OS memory sandbox: use a container memory/CPU limit in deployment.
 Memory mode keeps synchronous training for the local demo only. Run API and worker
 with identical environment settings. Do not start additional workers until host
@@ -104,8 +104,10 @@ separate from availability. Training can compare any three compatible models. Ne
 families include decision trees, Extra Trees, histogram boosting, AdaBoost, Gaussian
 Naive Bayes, SGD, MLP, KNN regression, Lasso, Elastic Net and Huber regression.
 Scale-sensitive models include an exported, training-fitted StandardScaler pipeline.
-SVM/MLP are limited to 10k rows; KNN to 50k rows. All models remain CPU-based and
-use existing scikit-learn dependencies. Neural-network convergence is not guaranteed.
+All models remain CPU-based and use existing scikit-learn dependencies. Very large
+fits can still hit the worker's 10 minute execution timeout or the memory/cell
+budgets above; those failures report the actual runtime reason. Neural-network
+convergence is not guaranteed.
 
 ## Downloaded package integrity
 

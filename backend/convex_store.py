@@ -89,11 +89,14 @@ class ConvexStore:
                 args["metadataStorageId"] = self.upload(encoded, "application/json")
                 files.append(args["metadataStorageId"])
             if blob is not None:
-                if len(blob) > 50 * 1024 * 1024:
-                    raise PersistenceError("Persisted object exceeds the 50 MB storage limit")
                 if kind == "dataset" and not metadata.get("source_csv"):
                     blob = gzip.compress(blob, compresslevel=1)
                     args["blobEncoding"] = "gzip"
+                # Check the bytes that will actually be uploaded. Derived
+                # dataset snapshots are compressed above and can be much
+                # smaller than their in-memory JSON representation.
+                if len(blob) > 50 * 1024 * 1024:
+                    raise PersistenceError("Persisted object exceeds the 50 MB storage limit")
                 args["storageId"] = self.upload(blob, "application/zip" if kind == "artifact" else "application/octet-stream")
                 files.append(args["storageId"])
             committing = True

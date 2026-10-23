@@ -7,6 +7,7 @@ Google's API — see Handover.md / Test-Checklist.md for what's verified.
 
 import pandas as pd
 import pytest
+import numpy as np
 
 from feature_engineering import (
     apply_fallback_encoding,
@@ -14,6 +15,7 @@ from feature_engineering import (
     parse_plan,
     profile_for_feature_engineering,
 )
+from daisy_predict import transform
 
 
 @pytest.fixture
@@ -99,6 +101,32 @@ class TestApplyFeatureEngineeringPlan:
         assert "signup_date" not in result_df.columns
         assert "signup_date_year" in result_df.columns
         assert result_df["signup_date_year"].iloc[0] == 2023
+
+    def test_datetime_features_replay_invalid_held_out_dates(self):
+        train = pd.DataFrame({
+            "event_date": ["2024-01-01", "01/02/2024", "not-a-date", "2024-03-01"],
+            "target": [0, 1, 0, 1],
+        })
+        steps = []
+        engineered, _ = apply_feature_engineering_plan(
+            train,
+            [{"type": "extract_datetime_features", "column": "event_date", "reasoning": "test"}],
+            target_column="target",
+            fitted_steps=steps,
+        )
+        bundle = {
+            "input_columns": ["event_date", "target"],
+            "feature_columns": [column for column in engineered.columns if column != "target"],
+            "target_column": "target",
+            "preprocessing": steps,
+        }
+        held_out = pd.DataFrame({
+            "event_date": ["2024-04-01", "invalid", "04/05/2024"],
+            "target": [0, 1, 0],
+        })
+        transformed = transform(bundle, held_out)
+        assert np.isfinite(transformed.to_numpy()).all()
+        assert transformed.loc[1, "event_date_year"] == steps[0]["date_fill_values"]["year"]
 
     def test_drop_low_variance_column(self, sample_df):
         actions = [{"type": "drop_low_variance_column", "column": "constant_col", "reasoning": "test"}]

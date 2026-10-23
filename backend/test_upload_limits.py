@@ -2,6 +2,7 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
+import pandas as pd
 from fastapi.testclient import TestClient
 
 import main
@@ -41,6 +42,10 @@ class UploadLimitTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["rows"], 2)
+
+    def test_dataset_limits_do_not_apply_training_row_cap(self):
+        frame = pd.DataFrame({"value": range(100001)})
+        main.check_dataset_limits(frame)
 
 
 if __name__ == "__main__":

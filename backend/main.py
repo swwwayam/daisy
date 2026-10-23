@@ -673,7 +673,9 @@ def process_dataset_upload(raw_bytes: bytes, filename: str | None, owner_id: str
             status_code=400,
             detail="The uploaded CSV has no rows."
         )
-    check_training_limits(df, [])
+    # Uploading and profiling a dataset must not apply model-training caps.
+    # Training limits are checked when a model job is actually submitted.
+    check_dataset_limits(df)
 
     dataset_id = str(uuid.uuid4())
     if not resource_store.enabled:
@@ -807,7 +809,9 @@ def review_dataset(dataset_id: str, req: InputReview, request: Request):
             req.training_config = TrainingConfig(**{**config, "problem_type": problem_type})
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail=f"Review could not be applied: {exc}") from exc
-    check_training_limits(frame, [])
+    # A review can be used for profiling and preprocessing before the user
+    # chooses a model, so keep model-specific row limits out of this stage.
+    check_dataset_limits(frame)
     source_dtypes = {str(column): str(dtype) for column, dtype in frame.dtypes.items()}
     steps = [policy]
     if req.training_config:
@@ -1509,14 +1513,36 @@ def run_model_training_agent(req: ModelTrainingRequest, request: Request):
     return execute_model_training(req, request)
 
 
+def check_dataset_limits(df):
+    """Guard ingestion with structural limits, independent of model choice.
+
+    A dataset can be uploaded, profiled, cleaned, and feature-engineered before
+    a model is selected. Applying model-training caps during upload made
+    valid large datasets fail at the first stage.
+    """
+    violations = []
+    if len(df.columns) > 1000:
+        violations.append("more than 1,000 columns")
+    if df.size > 20000000:
+        violations.append("more than 20 million cells")
+    if violations:
+        raise HTTPException(status_code=413, detail=f"Dataset limit: {', '.join(violations)}.")
+
+
 def check_training_limits(df, candidates):
-    if len(df) > 100000 or len(df.columns) > 1000 or df.size > 20000000 or df.memory_usage(deep=True).sum() > 256 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Training limit: 100k rows, 1k columns, 20m cells, 256 MB in memory.")
-    if len(df) > 10000 and any(name in {"svm_classifier", "svm_regressor"} for name in candidates):
-        raise HTTPException(status_code=413, detail="SVM training is limited to 10k rows; choose a tree or linear model.")
+    violations = []
+    if len(df.columns) > 1000:
+        violations.append("more than 1,000 columns")
+    if df.size > 20000000:
+        violations.append("more than 20 million cells")
+    if df.memory_usage(deep=True).sum() > 256 * 1024 * 1024:
+        violations.append("more than 256 MB in memory")
+    if violations:
+        raise HTTPException(status_code=413, detail=f"Training limit: {', '.join(violations)}.")
     for name in candidates:
-        if len(df) > row_limit(name):
-            raise HTTPException(status_code=413, detail=f"{name} is limited to {row_limit(name):,} rows. Choose another model.")
+        limit = row_limit(name)
+        if limit is not None and len(df) > limit:
+            raise HTTPException(status_code=413, detail=f"{name} could not accept this dataset at its current resource budget. Choose another model or reduce the feature set.")
 
 
 def check_feature_expansion(df, actions):

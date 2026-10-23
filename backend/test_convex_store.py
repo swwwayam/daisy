@@ -58,3 +58,28 @@ def test_snapshot_compression_is_lossless_and_leaves_csv_and_models_unchanged(ki
     assert store.get("id", "a", kind) == {"metadata": {"stage": "complete"}, "blob": raw}
     assert state["uploads"] == 1
     store.client.close()
+
+
+def test_large_compressible_dataset_is_checked_after_compression():
+    """A derived snapshot may exceed 50 MB before gzip but fit after it."""
+    state = {}
+    raw = b'{"values":[0,1,2],"literal":"NA"}\n' * 2_000_000
+    assert len(raw) > 50 * 1024 * 1024
+
+    def handle(request):
+        if request.url.path == "/upload":
+            state["bytes"] = request.content
+            return httpx.Response(200, json={"storageId": "file-id"})
+        args = json.loads(request.content)
+        if args["op"] == "upload":
+            return httpx.Response(200, json="https://files.example/upload")
+        if args["op"] == "save":
+            state.update(args)
+        return httpx.Response(200, content=b"null")
+
+    store = ConvexStore("https://test.convex.site", "private", httpx.MockTransport(handle))
+    store.save("large", "a", "dataset", {}, raw)
+    assert state["blobEncoding"] == "gzip"
+    assert len(state["bytes"]) < 50 * 1024 * 1024
+    assert gzip.decompress(state["bytes"]) == raw
+    store.client.close()

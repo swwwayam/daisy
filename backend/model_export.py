@@ -24,6 +24,10 @@ def capture_operation(df, action):
     for key in ("column_b", "value"):
         if key in action:
             step[key] = action[key]
+    if kind == "extract_datetime_features" and "date_fill_values" in action:
+        step["date_fill_values"] = {
+            part: float(value) for part, value in action["date_fill_values"].items()
+        }
     if kind == "impute":
         series = df[col]
         strategy = step["strategy"]

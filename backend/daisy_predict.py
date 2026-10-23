@@ -15,6 +15,14 @@ import numpy as np
 import pandas as pd
 
 
+DATETIME_FEATURE_PARTS = ("year", "month", "day", "dayofweek")
+
+
+def parse_datetime_values(values):
+    """Parse date-like values consistently across training and inference."""
+    return pd.to_datetime(values, errors="coerce", format="mixed")
+
+
 def verify_package(path):
     """Detect incomplete/changed packages, not source authenticity or pickle safety."""
     path = Path(path)
@@ -118,9 +126,11 @@ def transform(bundle, data):
         elif kind == "scale_numeric":
             df[col] = step["scaler"].transform(df[[col]].astype(float)).ravel()
         elif kind == "extract_datetime_features":
-            dates = pd.to_datetime(df[col], errors="coerce")
-            for part in ("year", "month", "day", "dayofweek"):
-                df[f"{col}_{part}"] = getattr(dates.dt, part)
+            dates = parse_datetime_values(df[col])
+            fills = step.get("date_fill_values") or {}
+            for part in DATETIME_FEATURE_PARTS:
+                values = getattr(dates.dt, part).astype(float)
+                df[f"{col}_{part}"] = values.fillna(float(fills.get(part, 0.0)))
             df = df.drop(columns=[col])
         elif kind == "encode_categorical":
             strategy = step["strategy"]

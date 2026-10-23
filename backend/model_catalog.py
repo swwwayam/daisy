@@ -47,14 +47,9 @@ MODEL_FACTORY = {
 }
 CLASSIFICATION_MODELS = list(MODEL_FACTORY)[:12]
 REGRESSION_MODELS = list(MODEL_FACTORY)[12:]
-
-
 def row_limit(name):
-    if name.startswith(("svm_", "mlp_")):
-        return 10000
-    if name.startswith("knn_"):
-        return 50000
-    return 100000
+    """Return None: row count alone is not a training rejection criterion."""
+    return None
 
 
 def catalog(problem_type=None):

@@ -28,6 +28,7 @@ import math
 from typing import Any
 
 import pandas as pd
+from daisy_predict import DATETIME_FEATURE_PARTS, parse_datetime_values
 from sklearn.preprocessing import (
     LabelEncoder,
     MinMaxScaler,
@@ -262,14 +263,25 @@ def _apply_scale_numeric(df, column, strategy, **_):
     return f"Scaled '{column}' using {strategy} scaling"
 
 
-def _apply_extract_datetime_features(df, column, **_):
+def _datetime_fill_values(series) -> dict[str, float]:
+    """Learn stable replacement values for invalid/missing date components."""
+    parsed = parse_datetime_values(series)
+    fills = {}
+    for part in DATETIME_FEATURE_PARTS:
+        values = getattr(parsed.dt, part).astype(float)
+        median = values.median()
+        fills[part] = float(median) if pd.notna(median) else 0.0
+    return fills
+
+
+def _apply_extract_datetime_features(df, column, date_fill_values=None, **_):
     if column not in df.columns:
         raise ValueError(f"Column '{column}' not found")
-    parsed = pd.to_datetime(df[column], errors="coerce")
-    df[f"{column}_year"] = parsed.dt.year
-    df[f"{column}_month"] = parsed.dt.month
-    df[f"{column}_day"] = parsed.dt.day
-    df[f"{column}_dayofweek"] = parsed.dt.dayofweek
+    parsed = parse_datetime_values(df[column])
+    fills = date_fill_values or _datetime_fill_values(df[column])
+    for part in DATETIME_FEATURE_PARTS:
+        values = getattr(parsed.dt, part).astype(float)
+        df[f"{column}_{part}"] = values.fillna(float(fills.get(part, 0.0)))
     df.drop(columns=[column], inplace=True)
     return f"Extracted year/month/day/dayofweek from '{column}' and dropped the original column"
 
@@ -292,7 +304,9 @@ def _apply_drop_high_correlation_column(df, column, column_b, **_):
 ACTION_HANDLERS = {
     "encode_categorical": lambda df, a: _apply_encode_categorical(df, a.get("column"), a.get("strategy")),
     "scale_numeric": lambda df, a: _apply_scale_numeric(df, a.get("column"), a.get("strategy")),
-    "extract_datetime_features": lambda df, a: _apply_extract_datetime_features(df, a.get("column")),
+    "extract_datetime_features": lambda df, a: _apply_extract_datetime_features(
+        df, a.get("column"), a.get("date_fill_values")
+    ),
     "drop_low_variance_column": lambda df, a: _apply_drop_low_variance_column(df, a.get("column")),
     "drop_high_correlation_column": lambda df, a: _apply_drop_high_correlation_column(
         df, a.get("column"), a.get("column_b")
@@ -326,10 +340,16 @@ def apply_feature_engineering_plan(
         else:
             before = df.copy()
             try:
+                effective_action = action
+                if action_type == "extract_datetime_features" and action.get("column") in df:
+                    # Learn this on the same frame that will be transformed so
+                    # held-out folds reuse the training replacement values.
+                    effective_action = dict(action)
+                    effective_action.setdefault("date_fill_values", _datetime_fill_values(df[action["column"]]))
                 if fitted_steps is not None:
                     from model_export import capture_operation
-                    fitted = capture_operation(df, action)
-                step["message"] = handler(df, action)
+                    fitted = capture_operation(df, effective_action)
+                step["message"] = handler(df, effective_action)
                 step["status"] = "success"
                 if fitted_steps is not None:
                     fitted_steps.append(fitted)
