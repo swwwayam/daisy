@@ -190,6 +190,8 @@ Rules:
 - Only use encode_categorical on non-numeric columns.
 - Only use scale_numeric on numeric columns with is_numeric true.
 - Only use extract_datetime_features on columns where is_datetime_like is true.
+- Never use extract_datetime_features for owner, name, brand, model, type, status,
+  state, category, or other label columns; encode those as categorical features.
 - Only use drop_low_variance_column when variance is at or near zero, or unique_count is 1.
 - Only use drop_high_correlation_column on pairs already listed in high_correlation_pairs — pick which of the two to drop and put it in "column", with the kept one in "column_b".
 - Use exact column names as they appear in the profile — never invent columns.
