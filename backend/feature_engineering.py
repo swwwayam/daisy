@@ -52,20 +52,53 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def _looks_like_datetime(series: pd.Series) -> bool:
-    """Cheap heuristic sense-check: try parsing a sample, don't force the
-    whole column through pd.to_datetime (expensive + noisy on false
-    positives like plain integers)."""
+_DATE_NAME_HINTS = (
+    "date", "datetime", "timestamp", "time", "day", "month", "year",
+    "created", "updated", "modified", "dob", "birth", "expiry", "expires",
+)
+_CATEGORICAL_NAME_HINTS = (
+    "owner", "name", "brand", "model", "type", "category", "class",
+    "status", "state", "city", "country", "fuel", "transmission",
+    "variant", "accident", "gender", "colour", "color", "segment",
+)
+_DATE_VALUE_PATTERN = r"(?:^|[^0-9])(?:19|20)\d{2}[^0-9]|\d{1,2}[./-]\d{1,2}[./-](?:\d{2}|\d{4})|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)"
+
+
+def _looks_like_datetime(series: pd.Series, column_name: str | None = None) -> bool:
+    """Conservatively identify real date columns, not arbitrary categories.
+
+    ``pd.to_datetime`` accepts surprisingly many ordinary strings.  A parse
+    success alone is therefore insufficient: the values must also contain
+    recognizable date syntax, unless pandas already typed the column as a
+    datetime.  Semantic categorical names such as ``Owner`` are explicitly
+    rejected unless the values themselves have strong date evidence.
+    """
     if pd.api.types.is_datetime64_any_dtype(series):
         return True
-    if not pd.api.types.is_object_dtype(series) and not pd.api.types.is_string_dtype(series):
+    if not (
+        pd.api.types.is_object_dtype(series)
+        or pd.api.types.is_string_dtype(series)
+        or isinstance(series.dtype, pd.CategoricalDtype)
+    ):
         return False
     sample = series.dropna().astype(str).head(20)
-    if sample.empty:
+    if len(sample) < 2:
         return False
     try:
         parsed = pd.to_datetime(sample, errors="coerce", format="mixed")
-        return bool(parsed.notna().mean() >= 0.8)  # 80%+ of sample parses cleanly
+        parsed_ratio = float(parsed.notna().mean())
+        syntax_ratio = float(sample.str.contains(_DATE_VALUE_PATTERN, case=False, regex=True).mean())
+        name = str(column_name or "").strip().lower().replace("_", " ")
+        has_date_name = any(token in name for token in _DATE_NAME_HINTS)
+        has_categorical_name = any(token in name for token in _CATEGORICAL_NAME_HINTS)
+        # Date columns can contain a small number of malformed values; those
+        # are handled by the fitted component imputation below.  A semantic
+        # date name plus strong date syntax is enough in that case.  Without
+        # date-name evidence, require a nearly perfect parse to avoid turning
+        # arbitrary categorical strings into timestamps.
+        if syntax_ratio < 0.6 or (parsed_ratio < 0.9 and not (has_date_name and parsed_ratio >= 0.6)):
+            return False
+        return has_date_name or not has_categorical_name
     except Exception:
         return False
 
@@ -97,7 +130,7 @@ def profile_for_feature_engineering(
             info["skew"] = _json_safe(round(float(series.skew()), 4)) if series.notna().sum() > 2 else None
         else:
             info["is_numeric"] = False
-            info["is_datetime_like"] = bool(_looks_like_datetime(series))
+            info["is_datetime_like"] = bool(_looks_like_datetime(series, col))
             info["cardinality"] = int(series.nunique(dropna=True))
 
         columns_profile.append(info)
@@ -340,6 +373,16 @@ def apply_feature_engineering_plan(
         else:
             before = df.copy()
             try:
+                if action_type == "extract_datetime_features":
+                    column = action.get("column")
+                    if column not in df or not _looks_like_datetime(df[column], column):
+                        step["status"] = "skipped"
+                        step["message"] = (
+                            f"Skipped datetime extraction for '{column}': the values do not "
+                            "look like dates; the column remains categorical."
+                        )
+                        steps.append(step)
+                        continue
                 effective_action = action
                 if action_type == "extract_datetime_features" and action.get("column") in df:
                     # Learn this on the same frame that will be transformed so

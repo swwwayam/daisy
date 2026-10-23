@@ -55,6 +55,21 @@ class TestProfileForFeatureEngineering:
         cat_info = next(c for c in profile["columns"] if c["name"] == "category")
         assert cat_info["is_datetime_like"] is False
 
+    def test_does_not_flag_owner_values_as_datetime(self):
+        frame = pd.DataFrame({"Owner": ["First Owner", "Second Owner", "Third Owner"]})
+        profile = profile_for_feature_engineering(frame)
+        owner = profile["columns"][0]
+        assert owner["is_datetime_like"] is False
+
+    def test_skips_hallucinated_datetime_action_for_categorical_column(self):
+        frame = pd.DataFrame({"Owner": ["First Owner", "Second Owner", "First Owner"]})
+        result, steps = apply_feature_engineering_plan(frame, [{
+            "type": "extract_datetime_features", "column": "Owner", "reasoning": "bad plan",
+        }])
+        assert steps[0]["status"] == "skipped"
+        assert list(result.columns) == ["Owner"]
+        assert "categorical" in steps[0]["message"]
+
     def test_detects_high_correlation_pair(self, sample_df):
         profile = profile_for_feature_engineering(sample_df)
         pairs = profile["high_correlation_pairs"]
